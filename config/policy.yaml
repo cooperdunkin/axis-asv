@@ -1,0 +1,34 @@
+# ASV Policy File
+# Deny-by-default: requests not matching an allow rule are rejected.
+#
+# Identity is read from the ASV_IDENTITY environment variable set in your
+# MCP host configuration (Cursor / Claude Code mcpServers env block).
+#
+# Supported wildcards:
+#   identity: "*"   — matches any identity
+#   service:  "*"   — matches any service
+#   actions:  ["*"] — matches any action
+#
+# Add a new block under "policies" for each identity you want to authorize.
+
+policies:
+  - identity: local-dev
+    allow:
+      - service: openai
+        actions:
+          - responses.create
+
+  # Example: CI pipeline with broader access
+  # - identity: ci-runner
+  #   allow:
+  #     - service: openai
+  #       actions:
+  #         - responses.create
+  #         - "*"
+
+  # Example: wildcard identity (grants all identities access)
+  # - identity: "*"
+  #   allow:
+  #     - service: openai
+  #       actions:
+  #         - responses.create

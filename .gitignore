@@ -1,0 +1,32 @@
+# Runtime data (never commit)
+/data/
+*.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+
+# Node modules
+node_modules/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+
+# ASV home directory (contains encrypted secrets + audit log)
+# ~/.asv/ is outside repo — listed here as documentation
+# DO NOT add ~/.asv to version control
