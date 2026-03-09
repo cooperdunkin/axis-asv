@@ -1,5 +1,8 @@
 # Agent Secrets Vault (ASV)
 
+[![npm version](https://badge.fury.io/js/agent-secrets-vault.svg)](https://www.npmjs.com/package/agent-secrets-vault)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A local, MCP-compatible credential broker that lets AI agents call external services **without ever receiving raw credentials**.
 
 ---

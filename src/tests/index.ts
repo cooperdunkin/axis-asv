@@ -27,6 +27,44 @@ import {
   sanitizeParams as sanitizeGitHubParams,
 } from "../proxy/github.js";
 import { RateLimiter } from "../policy/ratelimit.js";
+import { TtlStore } from "../policy/ttlstore.js";
+import {
+  validatePaymentIntentsCreateParams,
+  validateCustomersListParams,
+  sanitizeParams as sanitizeStripeParams,
+} from "../proxy/stripe.js";
+import {
+  validateChatPostMessageParams,
+  validateConversationsListParams,
+  sanitizeParams as sanitizeSlackParams,
+} from "../proxy/slack.js";
+import {
+  validateMailSendParams,
+  sanitizeParams as sanitizeSendGridParams,
+} from "../proxy/sendgrid.js";
+import {
+  validatePagesCreateParams,
+  validateDatabasesQueryParams,
+  sanitizeParams as sanitizeNotionParams,
+} from "../proxy/notion.js";
+import {
+  validateIssuesCreateParams,
+  sanitizeParams as sanitizeLinearParams,
+} from "../proxy/linear.js";
+import {
+  validateMessagesCreateParams,
+  sanitizeParams as sanitizeTwilioParams,
+} from "../proxy/twilio.js";
+import {
+  validateS3GetObjectParams,
+  validateS3PutObjectParams,
+  sanitizeParams as sanitizeAWSParams,
+} from "../proxy/aws.js";
+import {
+  validateStorageGetObjectParams,
+  validateStorageListObjectsParams,
+  sanitizeParams as sanitizeGCPParams,
+} from "../proxy/gcp.js";
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -208,56 +246,56 @@ policies:
   const pe = new PolicyEngine(policyFile);
 
   await test("Allows exact identity + service + action match", () => {
-    assert.strictEqual(pe.isAllowed("local-dev", "openai", "responses.create"), true);
+    assert.strictEqual(pe.isAllowed("local-dev", "openai", "responses.create").allowed, true);
   });
 
   await test("Allows second action in list", () => {
-    assert.strictEqual(pe.isAllowed("local-dev", "openai", "embeddings.create"), true);
+    assert.strictEqual(pe.isAllowed("local-dev", "openai", "embeddings.create").allowed, true);
   });
 
   await test("Denies action not in list for identity", () => {
-    assert.strictEqual(pe.isAllowed("local-dev", "openai", "fine-tune.create"), false);
+    assert.strictEqual(pe.isAllowed("local-dev", "openai", "fine-tune.create").allowed, false);
   });
 
   await test("Denies unknown identity", () => {
     assert.strictEqual(
-      pe.isAllowed("unknown-identity", "openai", "responses.create"),
+      pe.isAllowed("unknown-identity", "openai", "responses.create").allowed,
       false
     );
   });
 
   await test("Denies wrong service for valid identity", () => {
-    assert.strictEqual(pe.isAllowed("local-dev", "anthropic", "messages.create"), false);
+    assert.strictEqual(pe.isAllowed("local-dev", "anthropic", "messages.create").allowed, false);
   });
 
   await test("Wildcard action (*) allows any action for ci-runner", () => {
-    assert.strictEqual(pe.isAllowed("ci-runner", "openai", "anything.at.all"), true);
+    assert.strictEqual(pe.isAllowed("ci-runner", "openai", "anything.at.all").allowed, true);
   });
 
   await test("Wildcard service (*) allows any service for wildcard-identity", () => {
-    assert.strictEqual(pe.isAllowed("wildcard-identity", "someservice", "read"), true);
+    assert.strictEqual(pe.isAllowed("wildcard-identity", "someservice", "read").allowed, true);
   });
 
   await test("Wildcard action only covers allowed service", () => {
-    assert.strictEqual(pe.isAllowed("ci-runner", "someother-service", "blah"), false);
+    assert.strictEqual(pe.isAllowed("ci-runner", "someother-service", "blah").allowed, false);
   });
 
   await test("Wildcard identity (*) applies to any identity", () => {
     assert.strictEqual(
-      pe.isAllowed("totally-new-identity", "public-service", "public.action"),
+      pe.isAllowed("totally-new-identity", "public-service", "public.action").allowed,
       true
     );
   });
 
   await test("Wildcard identity does not expand allowed actions", () => {
     assert.strictEqual(
-      pe.isAllowed("totally-new-identity", "public-service", "private.action"),
+      pe.isAllowed("totally-new-identity", "public-service", "private.action").allowed,
       false
     );
   });
 
   await test("Deny-by-default: empty identity returns false", () => {
-    assert.strictEqual(pe.isAllowed("", "openai", "responses.create"), false);
+    assert.strictEqual(pe.isAllowed("", "openai", "responses.create").allowed, false);
   });
 
   await test("Policy file missing throws on load", () => {
@@ -284,6 +322,37 @@ policies:
 
   await test("getPath returns policy file path", () => {
     assert.strictEqual(pe.getPath(), policyFile);
+  });
+
+  // TTL field in policy
+  const ttlPolicyFile = path.join(tmpDir, "ttl-policy.yaml");
+  fs.writeFileSync(
+    ttlPolicyFile,
+    `
+policies:
+  - identity: ttl-user
+    allow:
+      - service: stripe
+        actions:
+          - paymentIntents.create
+        ttl: 300
+      - service: openai
+        actions:
+          - responses.create
+`
+  );
+  const ttlPe = new PolicyEngine(ttlPolicyFile);
+
+  await test("Policy: isAllowed returns ttl when rule has ttl", () => {
+    const result = ttlPe.isAllowed("ttl-user", "stripe", "paymentIntents.create");
+    assert.strictEqual(result.allowed, true);
+    assert.strictEqual(result.ttl, 300);
+  });
+
+  await test("Policy: isAllowed returns no ttl when rule has no ttl", () => {
+    const result = ttlPe.isAllowed("ttl-user", "openai", "responses.create");
+    assert.strictEqual(result.allowed, true);
+    assert.strictEqual(result.ttl, undefined);
   });
 
   // Clean up
@@ -619,6 +688,563 @@ async function runCliTests(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Stripe proxy tests
+// ---------------------------------------------------------------------------
+
+async function runStripeProxyTests(): Promise<void> {
+  console.log("\n[Stripe Proxy]");
+
+  await test("Stripe paymentIntents.create: rejects missing amount", () => {
+    assert.throws(
+      () => validatePaymentIntentsCreateParams({ currency: "usd" }),
+      /amount/i
+    );
+  });
+
+  await test("Stripe paymentIntents.create: rejects missing currency", () => {
+    assert.throws(
+      () => validatePaymentIntentsCreateParams({ amount: 1000 }),
+      /currency/i
+    );
+  });
+
+  await test("Stripe paymentIntents.create: valid params pass", () => {
+    const r = validatePaymentIntentsCreateParams({ amount: 2000, currency: "usd" });
+    assert.strictEqual(r.amount, 2000);
+    assert.strictEqual(r.currency, "usd");
+  });
+
+  await test("Stripe customers.list: valid params pass", () => {
+    const r = validateCustomersListParams({ limit: 10, email: "test@example.com" });
+    assert.strictEqual(r.limit, 10);
+  });
+
+  await test("Stripe customers.list: rejects out-of-range limit", () => {
+    assert.throws(
+      () => validateCustomersListParams({ limit: 200 }),
+      /limit/i
+    );
+  });
+
+  await test("Stripe: sanitizeParams strips api_key", () => {
+    const result = sanitizeStripeParams({
+      amount: 1000,
+      currency: "usd",
+      api_key: "sk_live_secret",
+    });
+    assert.ok(!("api_key" in result), "api_key should be stripped");
+    assert.ok("amount" in result, "amount should be kept");
+    assert.ok("currency" in result, "currency should be kept");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Slack proxy tests
+// ---------------------------------------------------------------------------
+
+async function runSlackProxyTests(): Promise<void> {
+  console.log("\n[Slack Proxy]");
+
+  await test("Slack chat.postMessage: rejects missing channel", () => {
+    assert.throws(
+      () => validateChatPostMessageParams({ text: "hello" }),
+      /channel/i
+    );
+  });
+
+  await test("Slack chat.postMessage: rejects missing text", () => {
+    assert.throws(
+      () => validateChatPostMessageParams({ channel: "#general" }),
+      /text/i
+    );
+  });
+
+  await test("Slack chat.postMessage: valid params pass", () => {
+    const r = validateChatPostMessageParams({ channel: "#general", text: "hello" });
+    assert.strictEqual(r.channel, "#general");
+    assert.strictEqual(r.text, "hello");
+  });
+
+  await test("Slack conversations.list: valid params pass", () => {
+    const r = validateConversationsListParams({ limit: 100, types: "public_channel" });
+    assert.strictEqual(r.limit, 100);
+  });
+
+  await test("Slack: sanitizeParams strips token", () => {
+    const result = sanitizeSlackParams({
+      channel: "#general",
+      text: "hi",
+      token: "xoxb-secret",
+    });
+    assert.ok(!("token" in result), "token should be stripped");
+    assert.ok("channel" in result, "channel should be kept");
+    assert.ok("text" in result, "text should be kept");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// SendGrid proxy tests
+// ---------------------------------------------------------------------------
+
+async function runSendGridProxyTests(): Promise<void> {
+  console.log("\n[SendGrid Proxy]");
+
+  await test("SendGrid mail.send: rejects missing to", () => {
+    assert.throws(
+      () =>
+        validateMailSendParams({
+          from: "sender@example.com",
+          subject: "Test",
+          text: "Hello",
+        }),
+      /to/i
+    );
+  });
+
+  await test("SendGrid mail.send: rejects missing from", () => {
+    assert.throws(
+      () =>
+        validateMailSendParams({
+          to: "recipient@example.com",
+          subject: "Test",
+          text: "Hello",
+        }),
+      /from/i
+    );
+  });
+
+  await test("SendGrid mail.send: rejects missing subject", () => {
+    assert.throws(
+      () =>
+        validateMailSendParams({
+          to: "recipient@example.com",
+          from: "sender@example.com",
+          text: "Hello",
+        }),
+      /subject/i
+    );
+  });
+
+  await test("SendGrid mail.send: rejects missing body", () => {
+    assert.throws(
+      () =>
+        validateMailSendParams({
+          to: "recipient@example.com",
+          from: "sender@example.com",
+          subject: "Test",
+        }),
+      /text|html|body/i
+    );
+  });
+
+  await test("SendGrid mail.send: valid params pass with text", () => {
+    const r = validateMailSendParams({
+      to: "recipient@example.com",
+      from: "sender@example.com",
+      subject: "Hello",
+      text: "World",
+    });
+    assert.strictEqual(r.subject, "Hello");
+  });
+
+  await test("SendGrid mail.send: valid params pass with array to", () => {
+    const r = validateMailSendParams({
+      to: ["a@example.com", "b@example.com"],
+      from: "sender@example.com",
+      subject: "Hello",
+      html: "<p>World</p>",
+    });
+    assert.ok(Array.isArray(r.to));
+  });
+
+  await test("SendGrid: sanitizeParams strips api_key", () => {
+    const result = sanitizeSendGridParams({
+      to: "a@example.com",
+      from: "b@example.com",
+      api_key: "SG.secret",
+    });
+    assert.ok(!("api_key" in result), "api_key should be stripped");
+    assert.ok("to" in result, "to should be kept");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Notion proxy tests
+// ---------------------------------------------------------------------------
+
+async function runNotionProxyTests(): Promise<void> {
+  console.log("\n[Notion Proxy]");
+
+  await test("Notion pages.create: rejects missing parent", () => {
+    assert.throws(
+      () =>
+        validatePagesCreateParams({
+          properties: { Name: { title: [{ text: { content: "Test" } }] } },
+        }),
+      /parent/i
+    );
+  });
+
+  await test("Notion pages.create: rejects parent without database_id or page_id", () => {
+    assert.throws(
+      () =>
+        validatePagesCreateParams({
+          parent: {},
+          properties: { Name: {} },
+        }),
+      /database_id|page_id/i
+    );
+  });
+
+  await test("Notion pages.create: rejects missing properties", () => {
+    assert.throws(
+      () =>
+        validatePagesCreateParams({
+          parent: { database_id: "abc123" },
+        }),
+      /properties/i
+    );
+  });
+
+  await test("Notion pages.create: valid params pass", () => {
+    const r = validatePagesCreateParams({
+      parent: { database_id: "abc123" },
+      properties: { Name: { title: [{ text: { content: "Test" } }] } },
+    });
+    assert.ok(r.parent.database_id === "abc123");
+  });
+
+  await test("Notion databases.query: rejects missing database_id", () => {
+    assert.throws(
+      () => validateDatabasesQueryParams({}),
+      /database_id/i
+    );
+  });
+
+  await test("Notion databases.query: valid params pass", () => {
+    const r = validateDatabasesQueryParams({ database_id: "db123" });
+    assert.strictEqual(r.database_id, "db123");
+  });
+
+  await test("Notion: sanitizeParams strips token", () => {
+    const result = sanitizeNotionParams({
+      database_id: "db123",
+      token: "secret_abc",
+    });
+    assert.ok(!("token" in result), "token should be stripped");
+    assert.ok("database_id" in result, "database_id should be kept");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Linear proxy tests
+// ---------------------------------------------------------------------------
+
+async function runLinearProxyTests(): Promise<void> {
+  console.log("\n[Linear Proxy]");
+
+  await test("Linear issues.create: rejects missing teamId", () => {
+    assert.throws(
+      () => validateIssuesCreateParams({ title: "Bug" }),
+      /teamId/i
+    );
+  });
+
+  await test("Linear issues.create: rejects missing title", () => {
+    assert.throws(
+      () => validateIssuesCreateParams({ teamId: "TEAM-1" }),
+      /title/i
+    );
+  });
+
+  await test("Linear issues.create: rejects invalid priority", () => {
+    assert.throws(
+      () => validateIssuesCreateParams({ teamId: "TEAM-1", title: "Bug", priority: 5 }),
+      /priority/i
+    );
+  });
+
+  await test("Linear issues.create: valid params pass", () => {
+    const r = validateIssuesCreateParams({ teamId: "TEAM-1", title: "Bug fix", priority: 2 });
+    assert.strictEqual(r.teamId, "TEAM-1");
+    assert.strictEqual(r.title, "Bug fix");
+    assert.strictEqual(r.priority, 2);
+  });
+
+  await test("Linear: sanitizeParams strips api_key", () => {
+    const result = sanitizeLinearParams({
+      teamId: "TEAM-1",
+      title: "Bug",
+      api_key: "lin_api_secret",
+    });
+    assert.ok(!("api_key" in result), "api_key should be stripped");
+    assert.ok("teamId" in result, "teamId should be kept");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Twilio proxy tests
+// ---------------------------------------------------------------------------
+
+async function runTwilioProxyTests(): Promise<void> {
+  console.log("\n[Twilio Proxy]");
+
+  await test("Twilio messages.create: rejects missing to", () => {
+    assert.throws(
+      () =>
+        validateMessagesCreateParams({
+          accountSid: "ACxxx",
+          from: "+15005550006",
+          body: "Hello",
+        }),
+      /to/i
+    );
+  });
+
+  await test("Twilio messages.create: rejects missing from", () => {
+    assert.throws(
+      () =>
+        validateMessagesCreateParams({
+          accountSid: "ACxxx",
+          to: "+15005550001",
+          body: "Hello",
+        }),
+      /from/i
+    );
+  });
+
+  await test("Twilio messages.create: rejects missing body", () => {
+    assert.throws(
+      () =>
+        validateMessagesCreateParams({
+          accountSid: "ACxxx",
+          to: "+15005550001",
+          from: "+15005550006",
+        }),
+      /body/i
+    );
+  });
+
+  await test("Twilio messages.create: rejects missing accountSid", () => {
+    assert.throws(
+      () =>
+        validateMessagesCreateParams({
+          to: "+15005550001",
+          from: "+15005550006",
+          body: "Hello",
+        }),
+      /accountSid/i
+    );
+  });
+
+  await test("Twilio messages.create: valid params pass", () => {
+    const r = validateMessagesCreateParams({
+      accountSid: "ACxxx",
+      to: "+15005550001",
+      from: "+15005550006",
+      body: "Hello World",
+    });
+    assert.strictEqual(r.body, "Hello World");
+  });
+
+  await test("Twilio: sanitizeParams strips password", () => {
+    const result = sanitizeTwilioParams({
+      accountSid: "ACxxx",
+      to: "+15005550001",
+      from: "+15005550006",
+      password: "auth_token_secret",
+    });
+    assert.ok(!("password" in result), "password should be stripped");
+    assert.ok("accountSid" in result, "accountSid should be kept");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// AWS proxy tests
+// ---------------------------------------------------------------------------
+
+async function runAWSProxyTests(): Promise<void> {
+  console.log("\n[AWS Proxy]");
+
+  await test("AWS s3.getObject: rejects missing bucket", () => {
+    assert.throws(
+      () => validateS3GetObjectParams({ key: "myfile.txt", region: "us-east-1" }),
+      /bucket/i
+    );
+  });
+
+  await test("AWS s3.getObject: rejects missing key", () => {
+    assert.throws(
+      () => validateS3GetObjectParams({ bucket: "my-bucket", region: "us-east-1" }),
+      /key/i
+    );
+  });
+
+  await test("AWS s3.getObject: rejects missing region", () => {
+    assert.throws(
+      () => validateS3GetObjectParams({ bucket: "my-bucket", key: "myfile.txt" }),
+      /region/i
+    );
+  });
+
+  await test("AWS s3.getObject: valid params pass", () => {
+    const r = validateS3GetObjectParams({
+      bucket: "my-bucket",
+      key: "myfile.txt",
+      region: "us-east-1",
+    });
+    assert.strictEqual(r.bucket, "my-bucket");
+    assert.strictEqual(r.region, "us-east-1");
+  });
+
+  await test("AWS s3.putObject: rejects missing body", () => {
+    assert.throws(
+      () =>
+        validateS3PutObjectParams({
+          bucket: "my-bucket",
+          key: "myfile.txt",
+          region: "us-east-1",
+        }),
+      /body/i
+    );
+  });
+
+  await test("AWS s3.putObject: valid params pass", () => {
+    const r = validateS3PutObjectParams({
+      bucket: "my-bucket",
+      key: "myfile.txt",
+      region: "us-east-1",
+      body: "file content",
+    });
+    assert.strictEqual(r.body, "file content");
+  });
+
+  await test("AWS: sanitizeParams strips secret", () => {
+    const result = sanitizeAWSParams({
+      bucket: "my-bucket",
+      region: "us-east-1",
+      secret_access_key: "wJalrXUtnFEMI",
+    });
+    assert.ok(!("secret_access_key" in result), "secret_access_key should be stripped");
+    assert.ok("bucket" in result, "bucket should be kept");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// GCP proxy tests
+// ---------------------------------------------------------------------------
+
+async function runGCPProxyTests(): Promise<void> {
+  console.log("\n[GCP Proxy]");
+
+  await test("GCP storage.getObject: rejects missing bucket", () => {
+    assert.throws(
+      () => validateStorageGetObjectParams({ object: "myfile.txt" }),
+      /bucket/i
+    );
+  });
+
+  await test("GCP storage.getObject: rejects missing object", () => {
+    assert.throws(
+      () => validateStorageGetObjectParams({ bucket: "my-bucket" }),
+      /object/i
+    );
+  });
+
+  await test("GCP storage.getObject: valid params pass", () => {
+    const r = validateStorageGetObjectParams({
+      bucket: "my-bucket",
+      object: "myfile.txt",
+    });
+    assert.strictEqual(r.bucket, "my-bucket");
+    assert.strictEqual(r.object, "myfile.txt");
+  });
+
+  await test("GCP storage.listObjects: rejects missing bucket", () => {
+    assert.throws(
+      () => validateStorageListObjectsParams({}),
+      /bucket/i
+    );
+  });
+
+  await test("GCP storage.listObjects: valid params pass", () => {
+    const r = validateStorageListObjectsParams({
+      bucket: "my-bucket",
+      prefix: "data/",
+      maxResults: 100,
+    });
+    assert.strictEqual(r.prefix, "data/");
+    assert.strictEqual(r.maxResults, 100);
+  });
+
+  await test("GCP: sanitizeParams strips token", () => {
+    const result = sanitizeGCPParams({
+      bucket: "my-bucket",
+      object: "file.txt",
+      token: "ya29.secret",
+    });
+    assert.ok(!("token" in result), "token should be stripped");
+    assert.ok("bucket" in result, "bucket should be kept");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// TtlStore tests
+// ---------------------------------------------------------------------------
+
+async function runTtlStoreTests(): Promise<void> {
+  console.log("\n[TtlStore]");
+
+  await test("TtlStore: no grant returns active=false", () => {
+    const store = new TtlStore();
+    const result = store.check("user", "stripe", "paymentIntents.create");
+    assert.strictEqual(result.active, false);
+  });
+
+  await test("TtlStore: grant returns active=true before expiry", () => {
+    const store = new TtlStore();
+    store.grant("user", "stripe", "paymentIntents.create", 300);
+    const result = store.check("user", "stripe", "paymentIntents.create");
+    assert.strictEqual(result.active, true);
+    if (result.active) {
+      assert.ok(result.remainingMs > 0, "remainingMs should be positive");
+    }
+  });
+
+  await test("TtlStore: expired grant returns active=false", () => {
+    const store = new TtlStore();
+    // Set expiry in the past
+    store.setExpiry("user", "stripe", "paymentIntents.create", Date.now() - 1000);
+    const result = store.check("user", "stripe", "paymentIntents.create");
+    assert.strictEqual(result.active, false);
+  });
+
+  await test("TtlStore: tracks (identity, service, action) tuples independently", () => {
+    const store = new TtlStore();
+    store.grant("user-a", "stripe", "paymentIntents.create", 300);
+    assert.strictEqual(store.check("user-a", "stripe", "paymentIntents.create").active, true);
+    assert.strictEqual(store.check("user-b", "stripe", "paymentIntents.create").active, false);
+    assert.strictEqual(store.check("user-a", "slack", "chat.postMessage").active, false);
+  });
+
+  await test("TtlStore: expire() removes grant", () => {
+    const store = new TtlStore();
+    store.grant("user", "stripe", "paymentIntents.create", 300);
+    store.expire("user", "stripe", "paymentIntents.create");
+    assert.strictEqual(store.check("user", "stripe", "paymentIntents.create").active, false);
+  });
+
+  await test("TtlStore: grant after expiry allows again", async () => {
+    const store = new TtlStore();
+    // Set to expire 50ms from now
+    store.setExpiry("user", "stripe", "paymentIntents.create", Date.now() + 50);
+    assert.strictEqual(store.check("user", "stripe", "paymentIntents.create").active, true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.strictEqual(store.check("user", "stripe", "paymentIntents.create").active, false);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main runner
 // ---------------------------------------------------------------------------
 
@@ -632,6 +1258,15 @@ async function main(): Promise<void> {
   await runGitHubProxyTests();
   await runRateLimiterTests();
   await runCliTests();
+  await runStripeProxyTests();
+  await runSlackProxyTests();
+  await runSendGridProxyTests();
+  await runNotionProxyTests();
+  await runLinearProxyTests();
+  await runTwilioProxyTests();
+  await runAWSProxyTests();
+  await runGCPProxyTests();
+  await runTtlStoreTests();
 
   console.log(`\n${"=".repeat(40)}`);
   console.log(`Results: ${passed} passed, ${failed} failed`);

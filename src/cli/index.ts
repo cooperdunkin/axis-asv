@@ -294,7 +294,7 @@ async function cmdDoctor(): Promise<void> {
       const sampleAllow = pe.isAllowed("local-dev", "openai", "responses.create");
       check(
         'Policy allows local-dev→openai→responses.create',
-        sampleAllow
+        sampleAllow.allowed
       );
     } catch (err) {
       check("Policy file parses OK", false, (err as Error).message);

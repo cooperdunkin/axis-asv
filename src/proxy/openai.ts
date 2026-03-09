@@ -18,6 +18,14 @@
 import { Keystore } from "../vault/keystore.js";
 import { proxyAnthropicMessages } from "./anthropic.js";
 import { proxyGitHubAction } from "./github.js";
+import { proxyStripeAction } from "./stripe.js";
+import { proxySlackAction } from "./slack.js";
+import { proxySendGridAction } from "./sendgrid.js";
+import { proxyNotionAction } from "./notion.js";
+import { proxyLinearAction } from "./linear.js";
+import { proxyTwilioAction } from "./twilio.js";
+import { proxyAWSAction } from "./aws.js";
+import { proxyGCPAction } from "./gcp.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -190,6 +198,38 @@ export async function proxyRequest(
       action === "contents.read")
   ) {
     return proxyGitHubAction(action, params, keystore);
+  }
+
+  if (service === "stripe") {
+    return proxyStripeAction(action, params, keystore);
+  }
+
+  if (service === "slack") {
+    return proxySlackAction(action, params, keystore);
+  }
+
+  if (service === "sendgrid") {
+    return proxySendGridAction(action, params, keystore);
+  }
+
+  if (service === "notion") {
+    return proxyNotionAction(action, params, keystore);
+  }
+
+  if (service === "linear") {
+    return proxyLinearAction(action, params, keystore);
+  }
+
+  if (service === "twilio") {
+    return proxyTwilioAction(action, params, keystore);
+  }
+
+  if (service === "aws") {
+    return proxyAWSAction(action, params, keystore);
+  }
+
+  if (service === "gcp") {
+    return proxyGCPAction(action, params, keystore);
   }
 
   return {

@@ -29,6 +29,7 @@ import * as yaml from "js-yaml";
 interface PolicyAllow {
   service: string;
   actions: string[];
+  ttl?: number;
 }
 
 interface RateLimit {
@@ -127,6 +128,13 @@ export class PolicyEngine {
             `Allow entry for service "${allow.service}" in policy "${entry.identity}" missing "actions" array.`
           );
         }
+        if (allow.ttl !== undefined) {
+          if (typeof allow.ttl !== "number" || allow.ttl <= 0) {
+            throw new Error(
+              `Allow entry for service "${allow.service}" in policy "${entry.identity}" has invalid "ttl" — must be a positive number (seconds).`
+            );
+          }
+        }
       }
     }
 
@@ -135,13 +143,19 @@ export class PolicyEngine {
 
   /**
    * Check whether an identity is allowed to perform an action on a service.
-   * Deny-by-default: returns false unless an explicit allow rule matches.
+   * Deny-by-default: returns { allowed: false } unless an explicit allow rule matches.
    *
    * Wildcard identity "*" matches any identity.
    * Wildcard action "*" matches any action.
    * Wildcard service "*" matches any service.
+   *
+   * If allowed and a TTL is configured on the matching rule, it is returned.
    */
-  isAllowed(identity: string, service: string, action: string): boolean {
+  isAllowed(
+    identity: string,
+    service: string,
+    action: string
+  ): { allowed: boolean; ttl?: number } {
     for (const entry of this.policies) {
       const identityMatches =
         entry.identity === identity || entry.identity === "*";
@@ -153,12 +167,12 @@ export class PolicyEngine {
 
         for (const allowedAction of allow.actions) {
           if (allowedAction === action || allowedAction === "*") {
-            return true;
+            return { allowed: true, ttl: allow.ttl };
           }
         }
       }
     }
-    return false;
+    return { allowed: false };
   }
 
   /** Reload policy from disk (useful for long-running servers). */

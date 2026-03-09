@@ -33,6 +33,7 @@ import { AuditLogger } from "../audit/audit.js";
 import { proxyRequest } from "../proxy/openai.js";
 import { keychainGet } from "../keychain/keychain.js";
 import { RateLimiter } from "../policy/ratelimit.js";
+import { TtlStore } from "../policy/ttlstore.js";
 
 // ---------------------------------------------------------------------------
 // Master password resolution
@@ -122,6 +123,7 @@ async function main(): Promise<void> {
   const policy = new PolicyEngine(policyPath);
   const audit = new AuditLogger();
   const rateLimiter = new RateLimiter();
+  const ttlStore = new TtlStore();
 
   // Watch policy file for changes and hot-reload on edit
   fs.watch(policy.getPath(), { persistent: false }, (eventType) => {
@@ -203,7 +205,7 @@ async function main(): Promise<void> {
     // ---------------------------------------------------------------------------
     // Policy check
     // ---------------------------------------------------------------------------
-    const allowed = policy.isAllowed(identity, service, action);
+    const { allowed, ttl } = policy.isAllowed(identity, service, action);
 
     if (!allowed) {
       const reason = `Policy denied: identity="${identity}" service="${service}" action="${action}"`;
@@ -228,6 +230,33 @@ async function main(): Promise<void> {
           },
         ],
       };
+    }
+
+    // ---------------------------------------------------------------------------
+    // TTL check (short-lived grant enforcement)
+    // ---------------------------------------------------------------------------
+    if (ttl !== undefined) {
+      const ttlState = ttlStore.check(identity, service, action);
+      if (ttlState.active) {
+        const remainingSecs = Math.ceil(ttlState.remainingMs / 1000);
+        const reason = `TTL active: try again in ${remainingSecs}s (grant TTL=${ttl}s)`;
+        audit.logDeny({
+          request_id: requestId,
+          identity,
+          service,
+          action,
+          justification,
+          reason,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ denied: true, reason, request_id: requestId }),
+            },
+          ],
+        };
+      }
     }
 
     // ---------------------------------------------------------------------------
@@ -307,6 +336,11 @@ async function main(): Promise<void> {
         ],
         isError: true,
       };
+    }
+
+    // Record TTL grant after successful call
+    if (ttl !== undefined) {
+      ttlStore.grant(identity, service, action, ttl);
     }
 
     // Success

@@ -65,3 +65,68 @@ policies:
   #     - service: openai
   #       actions:
   #         - responses.create
+
+  # Example: Stripe connector (with TTL — one call allowed per 5 minutes)
+  # - identity: local-dev
+  #   allow:
+  #     - service: stripe
+  #       actions:
+  #         - paymentIntents.create
+  #         - customers.list
+  #       ttl: 300
+
+  # Example: Slack connector
+  # - identity: local-dev
+  #   allow:
+  #     - service: slack
+  #       actions:
+  #         - chat.postMessage
+  #         - conversations.list
+
+  # Example: SendGrid connector
+  # - identity: local-dev
+  #   allow:
+  #     - service: sendgrid
+  #       actions:
+  #         - mail.send
+
+  # Example: Notion connector
+  # - identity: local-dev
+  #   allow:
+  #     - service: notion
+  #       actions:
+  #         - pages.create
+  #         - databases.query
+
+  # Example: Linear connector
+  # - identity: local-dev
+  #   allow:
+  #     - service: linear
+  #       actions:
+  #         - issues.create
+
+  # Example: Twilio connector
+  # Credential format: store as "accountSid:authToken" (combined secret)
+  # - identity: local-dev
+  #   allow:
+  #     - service: twilio
+  #       actions:
+  #         - messages.create
+
+  # Example: AWS S3 connector
+  # Credential format: store as "accessKeyId:secretAccessKey" (combined secret)
+  # - identity: local-dev
+  #   allow:
+  #     - service: aws
+  #       actions:
+  #         - s3.getObject
+  #         - s3.putObject
+
+  # Example: GCP Cloud Storage connector
+  # Credential: store a pre-generated OAuth2 access token (re-add when it expires)
+  # - identity: local-dev
+  #   allow:
+  #     - service: gcp
+  #       actions:
+  #         - storage.getObject
+  #         - storage.listObjects
