@@ -1,0 +1,4 @@
+# Tell GitHub Linguist to ignore generated/config files for language stats
+package-lock.json linguist-generated=true
+package.json linguist-detectable=false
+tsconfig.json linguist-detectable=false
