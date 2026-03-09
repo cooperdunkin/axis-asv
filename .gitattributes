@@ -2,3 +2,4 @@
 package-lock.json linguist-generated=true
 package.json linguist-detectable=false
 tsconfig.json linguist-detectable=false
+*.json linguist-generated=true
