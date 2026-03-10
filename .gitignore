@@ -30,3 +30,6 @@ coverage/
 # ASV home directory (contains encrypted secrets + audit log)
 # ~/.asv/ is outside repo — listed here as documentation
 # DO NOT add ~/.asv to version control
+
+# Local agent instructions (kept off public repo)
+CLAUDE.md
