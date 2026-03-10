@@ -27,6 +27,24 @@ The agent describes what it needs. ASV checks the policy, calls the external API
 
 ---
 
+## Supported Services
+
+| Service | Actions |
+|---|---|
+| **OpenAI** | `responses.create` |
+| **Anthropic** | `messages.create` |
+| **GitHub** | `repos.get`, `issues.create`, `pulls.create`, `contents.read` |
+| **Stripe** | `paymentIntents.create`, `customers.list` |
+| **Slack** | `chat.postMessage`, `conversations.list` |
+| **SendGrid** | `mail.send` |
+| **Notion** | `pages.create`, `databases.query` |
+| **Linear** | `issues.create` |
+| **Twilio** | `messages.create` |
+| **AWS S3** | `s3.getObject`, `s3.putObject` |
+| **GCP Cloud Storage** | `storage.getObject`, `storage.listObjects` |
+
+---
+
 ## 5-Minute Setup
 
 ### Prerequisites
@@ -73,8 +91,8 @@ Add to `~/.cursor/mcp.json` (or your project's `.cursor/mcp.json`):
 {
   "mcpServers": {
     "agent-secrets-vault": {
-      "command": "node",
-      "args": ["/absolute/path/to/agent-secrets-vault/dist/mcp/server.js"],
+      "command": "asv",
+      "args": ["mcp"],
       "env": {
         "ASV_IDENTITY": "local-dev",
         "ASV_MASTER_PASSWORD": "your-master-password-here"
@@ -86,14 +104,14 @@ Add to `~/.cursor/mcp.json` (or your project's `.cursor/mcp.json`):
 
 #### Claude Code
 
-Add to your Claude Code MCP config (`~/.claude/claude_code_config.json` or project `.claude/claude_code_config.json`):
+Add to `~/.claude.json` (global) or `.mcp.json` (project-level):
 
 ```json
 {
   "mcpServers": {
     "agent-secrets-vault": {
-      "command": "node",
-      "args": ["/absolute/path/to/agent-secrets-vault/dist/mcp/server.js"],
+      "command": "asv",
+      "args": ["mcp"],
       "env": {
         "ASV_IDENTITY": "local-dev",
         "ASV_MASTER_PASSWORD": "your-master-password-here"
@@ -127,8 +145,8 @@ Then update your MCP config to remove `ASV_MASTER_PASSWORD`:
 {
   "mcpServers": {
     "agent-secrets-vault": {
-      "command": "node",
-      "args": ["/absolute/path/to/agent-secrets-vault/dist/mcp/server.js"],
+      "command": "asv",
+      "args": ["mcp"],
       "env": {
         "ASV_IDENTITY": "local-dev"
       }
