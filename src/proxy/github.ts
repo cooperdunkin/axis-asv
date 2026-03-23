@@ -2,7 +2,7 @@
  * proxy/github.ts
  *
  * GitHub API proxy.
- * ASV retrieves the stored Personal Access Token and injects it — the agent never sees it.
+ * Axis retrieves the stored Personal Access Token and injects it — the agent never sees it.
  *
  * Supported actions:
  *   service: "github"
@@ -165,7 +165,7 @@ async function githubFetch(
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "agent-secrets-vault/0.1.0",
+        "User-Agent": "axis/0.1.0",
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });

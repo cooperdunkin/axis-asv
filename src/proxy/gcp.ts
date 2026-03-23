@@ -2,7 +2,7 @@
  * proxy/gcp.ts
  *
  * Google Cloud Storage proxy.
- * ASV retrieves the stored access token and injects it — the agent never sees it.
+ * Axis retrieves the stored access token and injects it — the agent never sees it.
  *
  * Supported actions:
  *   service: "gcp"
@@ -14,8 +14,8 @@
  *   - Error messages never include the token.
  *
  * Auth: Store a pre-generated OAuth2 access token.
- * Use "asv add gcp" and enter your access token.
- * Note: Access tokens expire (~1 hour). Re-run "asv add gcp" to refresh.
+ * Use "axis add gcp" and enter your access token.
+ * Note: Access tokens expire (~1 hour). Re-run "axis add gcp" to refresh.
  */
 
 import { Keystore } from "../vault/keystore.js";
@@ -132,7 +132,7 @@ async function gcsFetch(
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "User-Agent": "agent-secrets-vault/0.1.0",
+        "User-Agent": "axis/0.1.0",
       },
     });
   } catch (err) {

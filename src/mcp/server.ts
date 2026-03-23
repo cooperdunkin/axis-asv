@@ -2,19 +2,19 @@
 /**
  * mcp/server.ts
  *
- * ASV MCP Server — exposes one tool: request_credential
+ * Axis MCP Server — exposes one tool: request_credential
  *
  * Startup requirements (non-interactive, no TTY):
- *   ASV_MASTER_PASSWORD  — optional; takes priority over OS keychain if set
+ *   AXIS_MASTER_PASSWORD  — optional; takes priority over OS keychain if set
  *                          If absent, master password is read from OS keychain.
- *                          Run "asv keychain set" to store it there.
- *   ASV_IDENTITY         — optional; defaults to "unknown"
- *   ASV_POLICY_PATH      — optional; defaults to config/policy.yaml relative to cwd
+ *                          Run "axis keychain set" to store it there.
+ *   AXIS_IDENTITY         — optional; defaults to "unknown"
+ *   AXIS_POLICY_PATH      — optional; defaults to config/policy.yaml relative to cwd
  *
  * The agent calls request_credential with:
  *   { service, action, justification, params }
  *
- * ASV:
+ * Axis:
  *   1. Checks policy (deny-by-default).
  *   2. If denied: audit-logs + returns { denied: true, reason, request_id }.
  *   3. If allowed: calls proxy → audit-logs → returns { ok: true, result, request_id }.
@@ -41,14 +41,14 @@ import { TtlStore } from "../policy/ttlstore.js";
 
 /**
  * Resolve the master password from (in priority order):
- *   1. ASV_MASTER_PASSWORD env var (explicit override)
- *   2. OS keychain via keytar (set with: asv keychain set)
+ *   1. AXIS_MASTER_PASSWORD env var (explicit override)
+ *   2. OS keychain via keytar (set with: axis keychain set)
  *
  * Exits with a clear error if neither source has the password.
  * Returns [password, source] where source is "env" or "keychain".
  */
 async function resolveMasterPassword(): Promise<[string, string]> {
-  const envPassword = process.env["ASV_MASTER_PASSWORD"];
+  const envPassword = process.env["AXIS_MASTER_PASSWORD"];
   if (envPassword && envPassword.trim().length > 0) {
     return [envPassword, "env"];
   }
@@ -67,7 +67,7 @@ async function resolveMasterPassword(): Promise<[string, string]> {
 
   process.stderr.write(
     "Error: No master password found.\n" +
-      "Set ASV_MASTER_PASSWORD env var, or run: asv keychain set\n"
+      "Set AXIS_MASTER_PASSWORD env var, or run: axis keychain set\n"
   );
   process.exit(1);
 }
@@ -79,9 +79,9 @@ async function resolveMasterPassword(): Promise<[string, string]> {
 const REQUEST_CREDENTIAL_TOOL = {
   name: "request_credential",
   description:
-    "Ask ASV to call an external service on your behalf using a stored credential. " +
+    "Ask Axis to call an external service on your behalf using a stored credential. " +
     "You provide the service name, action, justification, and request parameters. " +
-    "ASV checks policy, proxies the call, and returns the API response. " +
+    "Axis checks policy, proxies the call, and returns the API response. " +
     "You never receive the raw credential.",
   inputSchema: {
     type: "object" as const,
@@ -115,8 +115,8 @@ const REQUEST_CREDENTIAL_TOOL = {
 async function main(): Promise<void> {
   // Resolve master password: env var takes priority, then OS keychain
   const [masterPassword, passwordSource] = await resolveMasterPassword();
-  const identity = process.env["ASV_IDENTITY"] ?? "unknown";
-  const policyPath = process.env["ASV_POLICY_PATH"] ?? undefined;
+  const identity = process.env["AXIS_IDENTITY"] ?? "unknown";
+  const policyPath = process.env["AXIS_POLICY_PATH"] ?? undefined;
 
   // Initialise shared services
   const keystore = new Keystore(masterPassword);
@@ -130,10 +130,10 @@ async function main(): Promise<void> {
     if (eventType === "change") {
       try {
         policy.reload();
-        process.stderr.write(`[ASV] Policy reloaded from ${policy.getPath()}\n`);
+        process.stderr.write(`[Axis] Policy reloaded from ${policy.getPath()}\n`);
       } catch (err) {
         process.stderr.write(
-          `[ASV] Policy reload failed: ${(err as Error).message}\n`
+          `[Axis] Policy reload failed: ${(err as Error).message}\n`
         );
       }
     }
@@ -142,14 +142,14 @@ async function main(): Promise<void> {
   // Verify master password early (fail fast on wrong password)
   if (!keystore.verifyPassword()) {
     process.stderr.write(
-      "Error: ASV_MASTER_PASSWORD is incorrect — could not decrypt keystore.\n"
+      "Error: AXIS_MASTER_PASSWORD is incorrect — could not decrypt keystore.\n"
     );
     process.exit(1);
   }
 
   // Create MCP server
   const server = new Server(
-    { name: "agent-secrets-vault", version: "0.1.0" },
+    { name: "axis", version: "0.1.0" },
     { capabilities: { tools: {} } }
   );
 
@@ -375,11 +375,11 @@ async function main(): Promise<void> {
 
   // Log startup to stderr (not stdout, which is the MCP JSON-RPC channel)
   process.stderr.write(
-    `[ASV] MCP server started — identity="${identity}" policy="${policy.getPath()}" password_source=${passwordSource}\n`
+    `[Axis] MCP server started — identity="${identity}" policy="${policy.getPath()}" password_source=${passwordSource}\n`
   );
 }
 
 main().catch((err) => {
-  process.stderr.write(`[ASV] Fatal error: ${(err as Error).message}\n`);
+  process.stderr.write(`[Axis] Fatal error: ${(err as Error).message}\n`);
   process.exit(1);
 });

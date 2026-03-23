@@ -2,7 +2,7 @@
  * proxy/anthropic.ts
  *
  * Anthropic Messages API proxy.
- * ASV retrieves the stored API key and injects it — the agent never sees it.
+ * Axis retrieves the stored API key and injects it — the agent never sees it.
  *
  * Supported:
  *   service: "anthropic"

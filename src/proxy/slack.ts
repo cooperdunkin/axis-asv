@@ -2,7 +2,7 @@
  * proxy/slack.ts
  *
  * Slack API proxy.
- * ASV retrieves the stored bot token and injects it — the agent never sees it.
+ * Axis retrieves the stored bot token and injects it — the agent never sees it.
  *
  * Supported actions:
  *   service: "slack"
@@ -123,7 +123,7 @@ async function slackFetch(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
-        "User-Agent": "agent-secrets-vault/0.1.0",
+        "User-Agent": "axis/0.1.0",
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });

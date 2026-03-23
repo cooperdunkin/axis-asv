@@ -2,17 +2,17 @@
 /**
  * cli/index.ts
  *
- * ASV CLI — binary name: asv
+ * Axis CLI — binary name: axis
  *
  * Commands:
- *   asv init           Create config dirs, default policy.yaml
- *   asv add <service>  Prompt for secret, encrypt and store
- *   asv list           List stored services (names only, no secrets)
- *   asv revoke <svc>   Delete stored secret
- *   asv doctor         Health-check: config, policy, crypto, proxy construction
- *   asv mcp            Start MCP server (delegates to mcp/server.ts)
- *   asv logs           View audit log entries (--tail to watch, --last <n> for count)
- *   asv rotate <svc>   Re-encrypt a service secret under a new master password
+ *   axis init           Create config dirs, default policy.yaml
+ *   axis add <service>  Prompt for secret, encrypt and store
+ *   axis list           List stored services (names only, no secrets)
+ *   axis revoke <svc>   Delete stored secret
+ *   axis doctor         Health-check: config, policy, crypto, proxy construction
+ *   axis mcp            Start MCP server (delegates to mcp/server.ts)
+ *   axis logs           View audit log entries (--tail to watch, --last <n> for count)
+ *   axis rotate <svc>   Re-encrypt a service secret under a new master password
  */
 
 import * as fs from "fs";
@@ -21,7 +21,7 @@ import * as os from "os";
 import * as crypto from "crypto";
 import * as readline from "readline";
 import { execFileSync } from "child_process";
-import { Keystore, asvHome, keystorePath } from "../vault/keystore.js";
+import { Keystore, axisHome, keystorePath } from "../vault/keystore.js";
 import { PolicyEngine, defaultPolicyPath } from "../policy/policy.js";
 import { AuditLogger, auditLogPath, AuditEntry } from "../audit/audit.js";
 import { keychainSet, keychainDelete, keychainExists, keychainGet } from "../keychain/keychain.js";
@@ -106,10 +106,10 @@ async function promptMasterPassword(confirmLabel = ""): Promise<string> {
 // Default policy YAML content
 // ---------------------------------------------------------------------------
 
-const DEFAULT_POLICY_YAML = `# ASV Policy File
+const DEFAULT_POLICY_YAML = `# Axis Policy File
 # Deny-by-default: requests not matching an allow rule are rejected.
 #
-# Identity is read from the ASV_IDENTITY environment variable.
+# Identity is read from the AXIS_IDENTITY environment variable.
 # Use "*" to match any identity, service, or action.
 
 policies:
@@ -131,14 +131,14 @@ policies:
 // Commands
 // ---------------------------------------------------------------------------
 
-/** asv init */
+/** axis init */
 async function cmdInit(): Promise<void> {
-  const home = asvHome();
+  const home = axisHome();
   const configDir = path.resolve(process.cwd(), "config");
   const dataDir = path.resolve(process.cwd(), "data");
   const policyFile = defaultPolicyPath();
 
-  // Create ~/.asv with restricted permissions
+  // Create ~/.axis with restricted permissions
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   print(`  ✓ Created ${home}`);
 
@@ -164,14 +164,14 @@ async function cmdInit(): Promise<void> {
   }
 
   print("");
-  print("ASV initialised. Next steps:");
-  print("  asv add openai    — store your OpenAI API key");
-  print("  asv mcp           — start the MCP server");
+  print("Axis initialised. Next steps:");
+  print("  axis add openai    — store your OpenAI API key");
+  print("  axis mcp           — start the MCP server");
 }
 
-/** asv add <service> */
+/** axis add <service> */
 async function cmdAdd(service: string): Promise<void> {
-  if (!service) die("Usage: asv add <service>  (e.g. asv add openai)");
+  if (!service) die("Usage: axis add <service>  (e.g. axis add openai)");
 
   print(`Adding secret for service: ${service}`);
 
@@ -204,10 +204,10 @@ async function cmdAdd(service: string): Promise<void> {
   print(`    Keystore: ${keystorePath()}`);
 }
 
-/** asv list */
+/** axis list */
 async function cmdList(): Promise<void> {
   if (!fs.existsSync(keystorePath())) {
-    print("No secrets stored. Run: asv add <service>");
+    print("No secrets stored. Run: axis add <service>");
     return;
   }
 
@@ -221,7 +221,7 @@ async function cmdList(): Promise<void> {
   const services = ks.listServices();
 
   if (services.length === 0) {
-    print("No secrets stored. Run: asv add <service>");
+    print("No secrets stored. Run: axis add <service>");
     return;
   }
 
@@ -232,9 +232,9 @@ async function cmdList(): Promise<void> {
   }
 }
 
-/** asv revoke <service> */
+/** axis revoke <service> */
 async function cmdRevoke(service: string): Promise<void> {
-  if (!service) die("Usage: asv revoke <service>  (e.g. asv revoke openai)");
+  if (!service) die("Usage: axis revoke <service>  (e.g. axis revoke openai)");
 
   const masterPw = await promptMasterPassword();
   const ks = new Keystore(masterPw);
@@ -251,9 +251,9 @@ async function cmdRevoke(service: string): Promise<void> {
   }
 }
 
-/** asv doctor */
+/** axis doctor */
 async function cmdDoctor(): Promise<void> {
-  print("ASV Doctor — running health checks\n");
+  print("Axis Doctor — running health checks\n");
   let ok = true;
 
   const check = (label: string, pass: boolean, detail?: string): void => {
@@ -263,9 +263,9 @@ async function cmdDoctor(): Promise<void> {
     if (!pass) ok = false;
   };
 
-  // 1. ~/.asv directory
-  const home = asvHome();
-  check("~/.asv directory exists", fs.existsSync(home), home);
+  // 1. ~/.axis directory
+  const home = axisHome();
+  check("~/.axis directory exists", fs.existsSync(home), home);
 
   // 2. Keystore file (may not exist yet)
   const kPath = keystorePath();
@@ -356,7 +356,7 @@ async function cmdDoctor(): Promise<void> {
       check("OpenAI key retrievable from keystore", false, (err as Error).message);
     }
   } else {
-    check("OpenAI key check (skipped — not stored)", true, 'run "asv add openai"');
+    check("OpenAI key check (skipped — not stored)", true, 'run "axis add openai"');
   }
 
   print("");
@@ -368,7 +368,7 @@ async function cmdDoctor(): Promise<void> {
   }
 }
 
-/** asv mcp — delegates to built dist/mcp/server.js */
+/** axis mcp — delegates to built dist/mcp/server.js */
 function cmdMcp(): void {
   const serverPath = path.resolve(__dirname, "../mcp/server.js");
   if (!fs.existsSync(serverPath)) {
@@ -378,9 +378,9 @@ function cmdMcp(): void {
   }
 
   // Validate required env before exec
-  if (!process.env["ASV_MASTER_PASSWORD"]) {
+  if (!process.env["AXIS_MASTER_PASSWORD"]) {
     die(
-      "ASV_MASTER_PASSWORD env var required for non-interactive MCP server start.\n" +
+      "AXIS_MASTER_PASSWORD env var required for non-interactive MCP server start.\n" +
         "Set it in your shell or MCP host configuration."
     );
   }
@@ -414,7 +414,7 @@ function formatLogEntry(entry: AuditEntry): string {
   return `[${ts}] ${decision}  ${entry.identity} → ${entry.service}/${entry.action}  ${latency}  req:${reqId}${errorSuffix}`;
 }
 
-/** asv logs [--tail] [--last <n>] */
+/** axis logs [--tail] [--last <n>] */
 async function cmdLogs(args: string[]): Promise<void> {
   const logPath = auditLogPath();
   const tail = args.includes("--tail");
@@ -428,7 +428,7 @@ async function cmdLogs(args: string[]): Promise<void> {
   }
 
   if (!fs.existsSync(logPath)) {
-    print(`No audit log found at ${logPath}. Run asv mcp to start logging.`);
+    print(`No audit log found at ${logPath}. Run axis mcp to start logging.`);
     return;
   }
 
@@ -479,7 +479,7 @@ async function cmdLogs(args: string[]): Promise<void> {
 // Keychain command
 // ---------------------------------------------------------------------------
 
-/** asv keychain <set|delete|status> */
+/** axis keychain <set|delete|status> */
 async function cmdKeychain(subcommand: string): Promise<void> {
   switch (subcommand) {
     case "set": {
@@ -494,7 +494,7 @@ async function cmdKeychain(subcommand: string): Promise<void> {
         die((err as Error).message);
       }
       print("  ✓ Master password stored in OS keychain.");
-      print("    You can now remove ASV_MASTER_PASSWORD from your MCP config.");
+      print("    You can now remove AXIS_MASTER_PASSWORD from your MCP config.");
       break;
     }
     case "delete": {
@@ -528,7 +528,7 @@ async function cmdKeychain(subcommand: string): Promise<void> {
     default:
       die(
         `Unknown keychain subcommand: "${subcommand}"\n` +
-          "Usage: asv keychain <set|delete|status>"
+          "Usage: axis keychain <set|delete|status>"
       );
   }
 }
@@ -537,9 +537,9 @@ async function cmdKeychain(subcommand: string): Promise<void> {
 // Rotate command
 // ---------------------------------------------------------------------------
 
-/** asv rotate <service> */
+/** axis rotate <service> */
 async function cmdRotate(service: string): Promise<void> {
-  if (!service) die("Usage: asv rotate <service>  (e.g. asv rotate openai)");
+  if (!service) die("Usage: axis rotate <service>  (e.g. axis rotate openai)");
 
   // 1. Prompt for current master password
   const currentPw = await promptMasterPassword("Current master password");
@@ -577,7 +577,7 @@ async function cmdRotate(service: string): Promise<void> {
 
   print(`  ✓ Secret for "${service}" re-encrypted with new master password.`);
   print(`    Note: other services remain encrypted with the old password.`);
-  print(`    Run asv rotate <service> for each additional service.`);
+  print(`    Run axis rotate <service> for each additional service.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -586,10 +586,10 @@ async function cmdRotate(service: string): Promise<void> {
 
 function printHelp(): void {
   print(`
-ASV — Agent Secrets Vault v0.1.1
+Axis v0.1.6
 
 Usage:
-  asv <command> [args]
+  axis <command> [args]
 
 Commands:
   init              Create config directories and default policy.yaml
@@ -597,7 +597,7 @@ Commands:
   list              List stored service names and metadata (no secrets)
   revoke <service>  Delete the stored secret for a service
   doctor            Run health checks on config, crypto, and keystore
-  mcp               Start the MCP server (requires ASV_MASTER_PASSWORD env var)
+  mcp               Start the MCP server (requires AXIS_MASTER_PASSWORD env var)
   logs              Show audit log entries (newest last, default 50)
                       --last <n>   Show last N entries
                       --tail       Watch for new entries in real time (Ctrl-C to stop)
@@ -609,14 +609,14 @@ Commands:
   help              Show this help message
 
 Environment variables (for MCP server):
-  ASV_MASTER_PASSWORD   Master password (required for "asv mcp")
-  ASV_IDENTITY          Identity for policy checks (default: "unknown")
-  ASV_POLICY_PATH       Override path to policy.yaml
+  AXIS_MASTER_PASSWORD   Master password (required for "axis mcp")
+  AXIS_IDENTITY          Identity for policy checks (default: "unknown")
+  AXIS_POLICY_PATH       Override path to policy.yaml
 
 Examples:
-  asv init
-  asv add openai
-  ASV_MASTER_PASSWORD=secret asv mcp
+  axis init
+  axis add openai
+  AXIS_MASTER_PASSWORD=secret axis mcp
 `);
 }
 
@@ -625,7 +625,7 @@ Examples:
 // ---------------------------------------------------------------------------
 
 function firstRunMarkerPath(): string {
-  return path.join(os.homedir(), ".asv", ".welcomed");
+  return path.join(os.homedir(), ".axis", ".welcomed");
 }
 
 function showFirstRunMessageIfNeeded(command: string): void {
@@ -637,13 +637,13 @@ function showFirstRunMessageIfNeeded(command: string): void {
 
   // Show once, then mark as seen
   print("");
-  print("👋 New to ASV? Tell us how you're using it — it takes 30 seconds and");
+  print("👋 New to Axis? Tell us how you're using it — it takes 30 seconds and");
   print("   helps shape what gets built next:");
-  print("   https://github.com/cooperdunkin/agent-secrets-vault/issues/new?template=user-feedback.md&title=How+I%27m+using+ASV");
+  print("   https://github.com/cooperdunkin/axis/issues/new?template=user-feedback.md&title=How+I%27m+using+Axis");
   print("");
 
   try {
-    fs.mkdirSync(path.join(os.homedir(), ".asv"), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(os.homedir(), ".axis"), { recursive: true, mode: 0o700 });
     fs.writeFileSync(marker, new Date().toISOString() + "\n", { mode: 0o600 });
   } catch {
     // Non-fatal — if we can't write the marker, we just show it again next time

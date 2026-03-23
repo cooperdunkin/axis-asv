@@ -2,7 +2,7 @@
  * proxy/aws.ts
  *
  * AWS S3 proxy using Signature Version 4 (SigV4).
- * ASV retrieves the stored credential and injects it — the agent never sees it.
+ * Axis retrieves the stored credential and injects it — the agent never sees it.
  *
  * Supported actions:
  *   service: "aws"
@@ -15,7 +15,7 @@
  *
  * Credential format: Store as "accessKeyId:secretAccessKey".
  * The proxy splits on first ":" at call time.
- * Use "asv add aws" and enter your credential in "accessKeyId:secretAccessKey" format.
+ * Use "axis add aws" and enter your credential in "accessKeyId:secretAccessKey" format.
  */
 
 import * as crypto from "crypto";
@@ -247,7 +247,7 @@ async function awsS3Fetch(
       method,
       headers: {
         ...signedHeaders,
-        "User-Agent": "agent-secrets-vault/0.1.0",
+        "User-Agent": "axis/0.1.0",
         ...(method === "PUT" ? { "Content-Type": "application/octet-stream" } : {}),
       },
       body: method === "PUT" ? bodyContent : undefined,

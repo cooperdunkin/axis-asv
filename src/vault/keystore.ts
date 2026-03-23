@@ -1,7 +1,7 @@
 /**
  * vault/keystore.ts
  *
- * AES-256-GCM encrypted keystore backed by ~/.asv/keystore.json.
+ * AES-256-GCM encrypted keystore backed by ~/.axis/keystore.json.
  * Master password is used to derive per-service encryption keys via PBKDF2.
  * No plaintext secret is ever written to disk.
  *
@@ -58,12 +58,12 @@ const AUTH_TAG_LENGTH = 16; // 128-bit tag
 // Paths
 // ---------------------------------------------------------------------------
 
-export function asvHome(): string {
-  return path.join(os.homedir(), ".asv");
+export function axisHome(): string {
+  return path.join(os.homedir(), ".axis");
 }
 
 export function keystorePath(): string {
-  return path.join(asvHome(), "keystore.json");
+  return path.join(axisHome(), "keystore.json");
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ export class Keystore {
    * Returns true on success, throws on failure.
    */
   static selfTest(password: string): boolean {
-    const testValue = "asv-self-test-" + crypto.randomBytes(8).toString("hex");
+    const testValue = "axis-self-test-" + crypto.randomBytes(8).toString("hex");
     const { salt, iv, ciphertext, tag } = encrypt(testValue, password);
     const entry: ServiceEntry = {
       salt,

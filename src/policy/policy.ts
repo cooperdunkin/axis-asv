@@ -71,7 +71,7 @@ export class PolicyEngine {
     if (!fs.existsSync(this.policyPath)) {
       throw new Error(
         `Policy file not found: ${this.policyPath}\n` +
-          `Run "asv init" to create a default policy file.`
+          `Run "axis init" to create a default policy file.`
       );
     }
 

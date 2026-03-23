@@ -2,7 +2,7 @@
  * proxy/notion.ts
  *
  * Notion API proxy.
- * ASV retrieves the stored integration token and injects it — the agent never sees it.
+ * Axis retrieves the stored integration token and injects it — the agent never sees it.
  *
  * Supported actions:
  *   service: "notion"
@@ -136,7 +136,7 @@ async function notionFetch(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
         "Notion-Version": NOTION_VERSION,
-        "User-Agent": "agent-secrets-vault/0.1.0",
+        "User-Agent": "axis/0.1.0",
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });

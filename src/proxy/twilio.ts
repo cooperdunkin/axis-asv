@@ -2,7 +2,7 @@
  * proxy/twilio.ts
  *
  * Twilio API proxy.
- * ASV retrieves the stored credential and injects it — the agent never sees it.
+ * Axis retrieves the stored credential and injects it — the agent never sees it.
  *
  * Supported actions:
  *   service: "twilio"
@@ -16,7 +16,7 @@
  *
  * Credential format: Store as "accountSid:authToken" (combined secret).
  * The proxy splits on first ":" at call time.
- * Use "asv add twilio" and enter your credential in "accountSid:authToken" format.
+ * Use "axis add twilio" and enter your credential in "accountSid:authToken" format.
  */
 
 import { Keystore } from "../vault/keystore.js";
@@ -121,7 +121,7 @@ async function twilioFetch(
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Authorization: `Basic ${Buffer.from(credential).toString("base64")}`,
-        "User-Agent": "agent-secrets-vault/0.1.0",
+        "User-Agent": "axis/0.1.0",
       },
       body: new URLSearchParams(body).toString(),
     });

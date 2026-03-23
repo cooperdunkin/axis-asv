@@ -12,8 +12,8 @@
 
 import type keytarTypes from "keytar";
 
-// Service name and account used to identify ASV's master password in the keychain
-const KEYCHAIN_SERVICE = "agent-secrets-vault";
+// Service name and account used to identify Axis's master password in the keychain
+const KEYCHAIN_SERVICE = "axis";
 const KEYCHAIN_ACCOUNT = "master-password";
 
 type Keytar = typeof keytarTypes;
@@ -25,7 +25,7 @@ function loadKeytar(): Keytar {
   } catch (err) {
     throw new Error(
       `OS keychain unavailable: ${(err as Error).message}. ` +
-        `Install libsecret-1-dev (Linux) or use ASV_MASTER_PASSWORD env var instead.`
+        `Install libsecret-1-dev (Linux) or use AXIS_MASTER_PASSWORD env var instead.`
     );
   }
 }

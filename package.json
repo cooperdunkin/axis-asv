@@ -1,10 +1,10 @@
 {
-  "name": "agent-secrets-vault",
+  "name": "axis-asv",
   "version": "0.1.6",
-  "description": "Local MCP-compatible credential broker — AI agents call external services without ever receiving raw credentials",
+  "description": "An agent secrets vault (ASV) for AI agents — credentials stay server-side, agents never see raw keys",
   "main": "dist/cli/index.js",
   "bin": {
-    "asv": "dist/cli/index.js"
+    "axis": "dist/cli/index.js"
   },
   "files": [
     "dist",
@@ -14,13 +14,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/cooperdunkin/agent-secrets-vault.git"
+    "url": "https://github.com/cooperdunkin/axis-asv.git"
   },
-  "homepage": "https://cooperdunkin.github.io/asv-landing/",
+  "homepage": "https://cooperdunkin.github.io/axis-landing/",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "start:mcp": "ASV_IDENTITY=local-dev node dist/mcp/server.js",
+    "start:mcp": "AXIS_IDENTITY=local-dev node dist/mcp/server.js",
     "test": "npx tsx src/tests/index.ts",
     "test:built": "node dist/tests/index.js",
     "lint": "tsc --noEmit",

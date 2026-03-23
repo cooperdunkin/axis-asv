@@ -2,7 +2,7 @@
  * proxy/openai.ts
  *
  * OpenAI Responses API proxy.
- * ASV retrieves the stored API key and injects it — the agent never sees it.
+ * Axis retrieves the stored API key and injects it — the agent never sees it.
  *
  * Supported:
  *   service: "openai"
@@ -132,7 +132,7 @@ export async function proxyOpenAIResponses(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "User-Agent": "agent-secrets-vault/0.1.0",
+        "User-Agent": "axis/0.1.0",
       },
       body: JSON.stringify(body),
     });

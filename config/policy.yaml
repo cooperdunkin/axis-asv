@@ -1,7 +1,7 @@
-# ASV Policy File
+# Axis Policy File
 # Deny-by-default: requests not matching an allow rule are rejected.
 #
-# Identity is read from the ASV_IDENTITY environment variable set in your
+# Identity is read from the AXIS_IDENTITY environment variable set in your
 # MCP host configuration (Cursor / Claude Code mcpServers env block).
 #
 # Supported wildcards:

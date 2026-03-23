@@ -95,7 +95,7 @@ async function runKeystoreTests(): Promise<void> {
   // Each stateful test gets its own isolated HOME directory so tests
   // don't share a keystore file (which would mix entries from different passwords).
   function withTmpHome<T>(fn: (tmpDir: string) => T): T {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "asv-test-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-test-"));
     const origHome = process.env["HOME"];
     process.env["HOME"] = tmpDir;
     try {
@@ -198,7 +198,7 @@ async function runKeystoreTests(): Promise<void> {
     withTmpHome((tmpDir) => {
       const ks = new Keystore("mode-test-pw");
       ks.setSecret("modesvc", "modeval");
-      const kPath = path.join(tmpDir, ".asv", "keystore.json");
+      const kPath = path.join(tmpDir, ".axis", "keystore.json");
       const stat = fs.statSync(kPath);
       const mode = (stat.mode & 0o777).toString(8);
       assert.strictEqual(mode, "600", `Expected mode 600, got ${mode}`);
@@ -214,7 +214,7 @@ async function runPolicyTests(): Promise<void> {
   console.log("\n[PolicyEngine]");
 
   // Write a temp policy file
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "asv-policy-test-"));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-policy-test-"));
   const policyFile = path.join(tmpDir, "policy.yaml");
 
   const policyContent = `
@@ -615,7 +615,7 @@ async function runCliTests(): Promise<void> {
   console.log("\n[CLI: logs + rotate]");
 
   function withTmpHome<T>(fn: (tmpDir: string) => T): T {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "asv-cli-test-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-cli-test-"));
     const origHome = process.env["HOME"];
     process.env["HOME"] = tmpDir;
     try {
@@ -1249,7 +1249,7 @@ async function runTtlStoreTests(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  console.log("ASV Test Suite");
+  console.log("Axis Test Suite");
   console.log("==============");
 
   await runKeystoreTests();

@@ -2,7 +2,7 @@
  * proxy/linear.ts
  *
  * Linear API proxy.
- * ASV retrieves the stored API key and injects it — the agent never sees it.
+ * Axis retrieves the stored API key and injects it — the agent never sees it.
  *
  * Supported actions:
  *   service: "linear"
@@ -127,7 +127,7 @@ async function linearFetch(
         "Content-Type": "application/json",
         // Linear uses "Authorization: <key>" (no "Bearer" prefix)
         Authorization: apiKey,
-        "User-Agent": "agent-secrets-vault/0.1.0",
+        "User-Agent": "axis/0.1.0",
       },
       body: JSON.stringify({ query, variables }),
     });

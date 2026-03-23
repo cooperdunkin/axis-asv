@@ -2,7 +2,7 @@
  * proxy/stripe.ts
  *
  * Stripe API proxy.
- * ASV retrieves the stored API key and injects it — the agent never sees it.
+ * Axis retrieves the stored API key and injects it — the agent never sees it.
  *
  * Supported actions:
  *   service: "stripe"
@@ -135,7 +135,7 @@ async function stripeFetch(
     // Stripe uses form-encoded bodies for POST
     const headers: Record<string, string> = {
       Authorization: `Bearer ${apiKey}`,
-      "User-Agent": "agent-secrets-vault/0.1.0",
+      "User-Agent": "axis/0.1.0",
     };
 
     let bodyContent: string | undefined;

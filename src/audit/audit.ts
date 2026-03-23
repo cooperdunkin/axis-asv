@@ -2,7 +2,7 @@
  * audit/audit.ts
  *
  * Append-only JSONL audit logger.
- * Writes to ~/.asv/audit.jsonl — one JSON object per line.
+ * Writes to ~/.axis/audit.jsonl — one JSON object per line.
  *
  * Security invariants:
  *   - NEVER log secrets, API keys, or full request bodies.
@@ -38,7 +38,7 @@ export interface AuditEntry {
 // ---------------------------------------------------------------------------
 
 export function auditLogPath(): string {
-  return path.join(os.homedir(), ".asv", "audit.jsonl");
+  return path.join(os.homedir(), ".axis", "audit.jsonl");
 }
 
 // ---------------------------------------------------------------------------
@@ -73,7 +73,7 @@ export class AuditLogger {
     } catch (err) {
       // Warn but do not crash the caller
       process.stderr.write(
-        `[ASV audit] WARNING: failed to write audit log: ${(err as Error).message}\n`
+        `[Axis audit] WARNING: failed to write audit log: ${(err as Error).message}\n`
       );
     }
   }
