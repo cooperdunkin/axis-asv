@@ -17,7 +17,7 @@
  * Note: Linear uses GraphQL. Auth header is "Authorization: <key>" (no "Bearer" prefix).
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -171,7 +171,7 @@ async function linearFetch(
 
 async function proxyIssuesCreate(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: IssuesCreateParams;
   try {
@@ -223,7 +223,7 @@ async function proxyIssuesCreate(
 export async function proxyLinearAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "issues.create":

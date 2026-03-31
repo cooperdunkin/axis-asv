@@ -18,7 +18,7 @@
  * Note: Access tokens expire (~1 hour). Re-run "axis add gcp" to refresh.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -176,7 +176,7 @@ async function gcsFetch(
 
 async function proxyStorageGetObject(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: StorageGetObjectParams;
   try {
@@ -203,7 +203,7 @@ async function proxyStorageGetObject(
 
 async function proxyStorageListObjects(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: StorageListObjectsParams;
   try {
@@ -243,7 +243,7 @@ async function proxyStorageListObjects(
 export async function proxyGCPAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "storage.getObject":

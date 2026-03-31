@@ -19,7 +19,7 @@
  * Use "axis add twilio" and enter your credential in "accountSid:authToken" format.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -158,7 +158,7 @@ async function twilioFetch(
 
 async function proxyMessagesCreate(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: MessagesCreateParams;
   try {
@@ -216,7 +216,7 @@ async function proxyMessagesCreate(
 export async function proxyTwilioAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "messages.create":

@@ -15,7 +15,7 @@
  *   - Request body is built from validated + sanitized params only.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -106,7 +106,7 @@ export function validateAnthropicParams(params: unknown): AnthropicProxyParams {
  */
 export async function proxyAnthropicMessages(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   // 1. Validate params
   let validated: AnthropicProxyParams;

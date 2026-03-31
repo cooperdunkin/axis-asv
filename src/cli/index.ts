@@ -25,6 +25,8 @@ import { Keystore, axisHome, keystorePath } from "../vault/keystore.js";
 import { PolicyEngine, defaultPolicyPath } from "../policy/policy.js";
 import { AuditLogger, auditLogPath, AuditEntry } from "../audit/audit.js";
 import { keychainSet, keychainDelete, keychainExists, keychainGet } from "../keychain/keychain.js";
+import { CloudClient } from "../cloud/client.js";
+import { encryptSecret } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -177,13 +179,6 @@ async function cmdAdd(service: string): Promise<void> {
 
   const masterPw = await promptMasterPassword();
 
-  // Verify password against existing entries (if any)
-  const ks = new Keystore(masterPw);
-  const existing = ks.listServices();
-  if (existing.length > 0 && !ks.verifyPassword()) {
-    die("Wrong master password.");
-  }
-
   let secretValue: string;
   if (service === "openai") {
     secretValue = await prompt("OpenAI API key (sk-...): ", true);
@@ -195,17 +190,60 @@ async function cmdAdd(service: string): Promise<void> {
     die("Secret must not be empty.");
   }
 
-  ks.setSecret(service, secretValue);
-
-  // Overwrite the local variable as soon as we're done
-  secretValue = "";
-
-  print(`  ✓ Secret for "${service}" stored and encrypted.`);
-  print(`    Keystore: ${keystorePath()}`);
+  const session = CloudClient.getSession();
+  if (session) {
+    // Cloud mode: encrypt locally, send ciphertext to cloud
+    const { salt, iv, ciphertext, tag } = encryptSecret(secretValue, masterPw);
+    secretValue = "";
+    try {
+      await CloudClient.addCredential(service, ciphertext, salt, iv, tag);
+    } catch (err) {
+      die((err as Error).message);
+    }
+    print(`  ✓ Secret for "${service}" encrypted and stored in Axis Cloud.`);
+    print(`    Logged in as: ${session.email}`);
+  } else {
+    // Local mode: verify password against existing entries, then store locally
+    const ks = new Keystore(masterPw);
+    const existing = ks.listServices();
+    if (existing.length > 0 && !ks.verifyPassword()) {
+      secretValue = "";
+      die("Wrong master password.");
+    }
+    ks.setSecret(service, secretValue);
+    secretValue = "";
+    print(`  ✓ Secret for "${service}" stored and encrypted.`);
+    print(`    Keystore: ${keystorePath()}`);
+  }
 }
 
 /** axis list */
 async function cmdList(): Promise<void> {
+  const session = CloudClient.getSession();
+
+  if (session) {
+    let services: Array<{ id: string; service: string; created_at: string; updated_at: string }>;
+    try {
+      services = await CloudClient.listCredentials();
+    } catch (err) {
+      die((err as Error).message);
+    }
+
+    if (services.length === 0) {
+      print("No secrets stored. Run: axis add <service>");
+      return;
+    }
+
+    print(`Stored services (${services.length}) — Axis Cloud [${session.email}]:`);
+    print("");
+    for (const svc of services) {
+      print(`  ${svc.service.padEnd(20)}  created: ${svc.created_at}  updated: ${svc.updated_at}`);
+    }
+    print("");
+    return;
+  }
+
+  // Local mode
   if (!fs.existsSync(keystorePath())) {
     print("No secrets stored. Run: axis add <service>");
     return;
@@ -225,17 +263,43 @@ async function cmdList(): Promise<void> {
     return;
   }
 
-  print(`Stored services (${services.length}):`);
+  print(`Stored services (${services.length}) — local keystore:`);
   print("");
   for (const svc of services) {
     print(`  ${svc.service.padEnd(20)}  created: ${svc.createdAt}  updated: ${svc.updatedAt}`);
   }
+  print("");
 }
 
 /** axis revoke <service> */
 async function cmdRevoke(service: string): Promise<void> {
   if (!service) die("Usage: axis revoke <service>  (e.g. axis revoke openai)");
 
+  const session = CloudClient.getSession();
+
+  if (session) {
+    // Cloud mode: find the credential id by service name, then delete
+    let creds: Array<{ id: string; service: string; created_at: string; updated_at: string }>;
+    try {
+      creds = await CloudClient.listCredentials();
+    } catch (err) {
+      die((err as Error).message);
+    }
+    const cred = creds.find((c) => c.service === service);
+    if (!cred) {
+      print(`  · No secret found for "${service}" — nothing to revoke.`);
+      return;
+    }
+    try {
+      await CloudClient.deleteCredential(cred.id);
+    } catch (err) {
+      die((err as Error).message);
+    }
+    print(`  ✓ Secret for "${service}" revoked from Axis Cloud.`);
+    return;
+  }
+
+  // Local mode
   const masterPw = await promptMasterPassword();
   const ks = new Keystore(masterPw);
 
@@ -374,14 +438,6 @@ function cmdMcp(): void {
   if (!fs.existsSync(serverPath)) {
     die(
       `MCP server not built: ${serverPath}\nRun "npm run build" first.`
-    );
-  }
-
-  // Validate required env before exec
-  if (!process.env["AXIS_MASTER_PASSWORD"]) {
-    die(
-      "AXIS_MASTER_PASSWORD env var required for non-interactive MCP server start.\n" +
-        "Set it in your shell or MCP host configuration."
     );
   }
 
@@ -581,12 +637,74 @@ async function cmdRotate(service: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Cloud account commands
+// ---------------------------------------------------------------------------
+
+/** axis signup */
+async function cmdSignup(): Promise<void> {
+  const email = await prompt("Email: ");
+  if (!email || !email.includes("@")) die("Invalid email address.");
+
+  const password = await promptMasterPassword("Password");
+  const confirm = await promptMasterPassword("Confirm password");
+  if (password !== confirm) die("Passwords do not match.");
+
+  try {
+    await CloudClient.signup(email, password);
+    print(`  ✓ Account created and session saved.`);
+    print(`    Logged in as: ${email}`);
+    print(`    Run 'axis add openai' to store your first credential.`);
+  } catch (err) {
+    die((err as Error).message);
+  }
+}
+
+/** axis login */
+async function cmdLogin(): Promise<void> {
+  const email = await prompt("Email: ");
+  if (!email || !email.includes("@")) die("Invalid email address.");
+
+  const password = await promptMasterPassword("Password");
+
+  try {
+    await CloudClient.login(email, password);
+    print(`  ✓ Logged in as: ${email}`);
+    print(`    Run 'axis list' to see your stored credentials.`);
+  } catch (err) {
+    die((err as Error).message);
+  }
+}
+
+/** axis logout */
+async function cmdLogout(): Promise<void> {
+  const session = CloudClient.getSession();
+  if (!session) {
+    print("  · Not logged in.");
+    return;
+  }
+  await CloudClient.logout();
+  print(`  ✓ Logged out.`);
+}
+
+/** axis whoami */
+async function cmdWhoami(): Promise<void> {
+  const session = CloudClient.getSession();
+  if (!session) {
+    print("Not logged in. Run: axis login");
+    return;
+  }
+  print(`Logged in as: ${session.email}`);
+  print(`Plan: Free`);
+  print(`  To upgrade: https://axisproxy.com/#pricing`);
+}
+
+// ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
 
 function printHelp(): void {
   print(`
-Axis v0.1.6
+Axis v0.2.0
 
 Usage:
   axis <command> [args]
@@ -597,7 +715,7 @@ Commands:
   list              List stored service names and metadata (no secrets)
   revoke <service>  Delete the stored secret for a service
   doctor            Run health checks on config, crypto, and keystore
-  mcp               Start the MCP server (requires AXIS_MASTER_PASSWORD env var)
+  mcp               Start the MCP server (reads master password from keychain or AXIS_MASTER_PASSWORD)
   logs              Show audit log entries (newest last, default 50)
                       --last <n>   Show last N entries
                       --tail       Watch for new entries in real time (Ctrl-C to stop)
@@ -606,17 +724,27 @@ Commands:
   keychain set      Store master password in OS keychain (eliminates plaintext in config)
   keychain delete   Remove master password from OS keychain
   keychain status   Check whether master password is in keychain
+
+Cloud account:
+  signup            Create an Axis Cloud account
+  login             Sign in to Axis Cloud
+  logout            Sign out and clear local session
+  whoami            Show current logged-in account and plan
+
   help              Show this help message
 
 Environment variables (for MCP server):
-  AXIS_MASTER_PASSWORD   Master password (required for "axis mcp")
-  AXIS_IDENTITY          Identity for policy checks (default: "unknown")
-  AXIS_POLICY_PATH       Override path to policy.yaml
+  AXIS_MASTER_PASSWORD    Master password (optional if stored in OS keychain via "axis keychain set")
+  AXIS_IDENTITY           Identity for policy checks (default: "unknown")
+  AXIS_POLICY_PATH        Override path to policy.yaml
 
 Examples:
-  axis init
+  axis signup
+  axis login
   axis add openai
-  AXIS_MASTER_PASSWORD=secret axis mcp
+  axis list
+  axis mcp                              # uses OS keychain for master password
+  AXIS_MASTER_PASSWORD=secret axis mcp  # or pass explicitly via env
 `);
 }
 
@@ -686,6 +814,18 @@ async function main(): Promise<void> {
       break;
     case "keychain":
       await cmdKeychain(rest[0] ?? "");
+      break;
+    case "signup":
+      await cmdSignup();
+      break;
+    case "login":
+      await cmdLogin();
+      break;
+    case "logout":
+      await cmdLogout();
+      break;
+    case "whoami":
+      await cmdWhoami();
       break;
     case "help":
     case "--help":

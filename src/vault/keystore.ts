@@ -43,6 +43,11 @@ export interface KeystoreData {
   entries: Record<string, ServiceEntry>;
 }
 
+/** Minimal interface required by proxy modules — satisfied by both Keystore and CloudKeystore. */
+export interface SecretStore {
+  getSecret(service: string): string;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -270,4 +275,33 @@ export class Keystore {
     }
     return true;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Standalone crypto helpers (used by cloud client for local encrypt/decrypt)
+// ---------------------------------------------------------------------------
+
+/** Encrypt a plaintext secret with a master password. Returns hex-encoded fields. */
+export function encryptSecret(
+  secret: string,
+  masterPassword: string
+): { salt: string; iv: string; ciphertext: string; tag: string } {
+  return encrypt(secret, masterPassword);
+}
+
+/** Decrypt a cloud-stored credential entry with a master password. */
+export function decryptSecret(
+  entry: { salt: string; iv: string; ciphertext: string; tag: string },
+  masterPassword: string
+): string {
+  return decrypt(
+    {
+      salt: entry.salt,
+      iv: entry.iv,
+      ciphertext: entry.ciphertext,
+      tag: entry.tag,
+      metadata: { service: "", createdAt: "", updatedAt: "" },
+    },
+    masterPassword
+  );
 }

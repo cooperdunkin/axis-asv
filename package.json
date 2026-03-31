@@ -1,6 +1,6 @@
 {
   "name": "axis-asv",
-  "version": "0.1.7",
+  "version": "0.3.0",
   "description": "An agent secrets vault (ASV) for AI agents — credentials stay server-side, agents never see raw keys",
   "main": "dist/cli/index.js",
   "bin": {
@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
+    "@supabase/supabase-js": "^2.100.1",
     "js-yaml": "^4.1.0",
     "keytar": "^7.9.0",
     "uuid": "^11.1.0"
@@ -50,5 +51,5 @@
     "ai-agents",
     "credentials"
   ],
-  "license": "MIT"
+  "license": "BUSL-1.1"
 }

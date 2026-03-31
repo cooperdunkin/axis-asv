@@ -15,7 +15,7 @@
  *   - Request body is built from validated + sanitized params only.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -186,7 +186,7 @@ async function stripeFetch(
 
 async function proxyPaymentIntentsCreate(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: PaymentIntentsCreateParams;
   try {
@@ -215,7 +215,7 @@ async function proxyPaymentIntentsCreate(
 
 async function proxyCustomersList(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: CustomersListParams;
   try {
@@ -254,7 +254,7 @@ async function proxyCustomersList(
 export async function proxyStripeAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "paymentIntents.create":

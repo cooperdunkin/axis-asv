@@ -2,7 +2,7 @@
 /**
  * mcp/server.ts
  *
- * Axis MCP Server — exposes one tool: request_credential
+ * Axis MCP Server — exposes one tool: execute_action
  *
  * Startup requirements (non-interactive, no TTY):
  *   AXIS_MASTER_PASSWORD  — optional; takes priority over OS keychain if set
@@ -11,7 +11,7 @@
  *   AXIS_IDENTITY         — optional; defaults to "unknown"
  *   AXIS_POLICY_PATH      — optional; defaults to config/policy.yaml relative to cwd
  *
- * The agent calls request_credential with:
+ * The agent calls execute_action with:
  *   { service, action, justification, params }
  *
  * Axis:
@@ -27,13 +27,40 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { Keystore } from "../vault/keystore.js";
+import { Keystore, SecretStore } from "../vault/keystore.js";
 import { PolicyEngine } from "../policy/policy.js";
 import { AuditLogger } from "../audit/audit.js";
 import { proxyRequest } from "../proxy/openai.js";
 import { keychainGet } from "../keychain/keychain.js";
 import { RateLimiter } from "../policy/ratelimit.js";
 import { TtlStore } from "../policy/ttlstore.js";
+import { CloudClient, CloudKeystore } from "../cloud/client.js";
+import type { AuditEntry } from "../audit/audit.js";
+
+// ---------------------------------------------------------------------------
+// Cloud audit log sync (fire-and-forget)
+// ---------------------------------------------------------------------------
+
+/**
+ * Post an audit entry to the cloud API if a session exists.
+ * Never throws — cloud audit failure must not interrupt the request flow.
+ */
+function postCloudAuditLog(entry: AuditEntry): void {
+  const session = CloudClient.getSession();
+  if (!session) return;
+
+  const url = "https://axis-webhook.vercel.app/api/audit-logs";
+  fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${session.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(entry),
+  }).catch(() => {
+    // Silently ignore — local log is the source of truth
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Master password resolution
@@ -76,13 +103,13 @@ async function resolveMasterPassword(): Promise<[string, string]> {
 // Tool schema
 // ---------------------------------------------------------------------------
 
-const REQUEST_CREDENTIAL_TOOL = {
-  name: "request_credential",
+const EXECUTE_ACTION_TOOL = {
+  name: "execute_action",
   description:
-    "Ask Axis to call an external service on your behalf using a stored credential. " +
+    "Ask Axis to execute an action on an external service on your behalf. " +
     "You provide the service name, action, justification, and request parameters. " +
-    "Axis checks policy, proxies the call, and returns the API response. " +
-    "You never receive the raw credential.",
+    "Axis checks policy, executes the action server-side, and returns the result. " +
+    "You never receive or handle credentials directly.",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -118,11 +145,49 @@ async function main(): Promise<void> {
   const identity = process.env["AXIS_IDENTITY"] ?? "unknown";
   const policyPath = process.env["AXIS_POLICY_PATH"] ?? undefined;
 
+  // Determine credential source: cloud (if logged in) or local keystore
+  let keystore: SecretStore;
+  const cloudSession = CloudClient.getSession();
+
+  if (cloudSession) {
+    process.stderr.write("[Axis] Cloud session found — loading credentials from Axis Cloud...\n");
+    try {
+      keystore = await CloudKeystore.build(masterPassword);
+      process.stderr.write("[Axis] Cloud credentials loaded and decrypted.\n");
+    } catch (err) {
+      process.stderr.write(
+        `[Axis] Failed to load cloud credentials: ${(err as Error).message}\n` +
+        "[Axis] Falling back to local keystore.\n"
+      );
+      const localKs = new Keystore(masterPassword);
+      if (!localKs.verifyPassword()) {
+        process.stderr.write("Error: AXIS_MASTER_PASSWORD is incorrect.\n");
+        process.exit(1);
+      }
+      keystore = localKs;
+    }
+  } else {
+    const localKs = new Keystore(masterPassword);
+    if (!localKs.verifyPassword()) {
+      process.stderr.write(
+        "Error: AXIS_MASTER_PASSWORD is incorrect — could not decrypt keystore.\n"
+      );
+      process.exit(1);
+    }
+    keystore = localKs;
+  }
+
   // Initialise shared services
-  const keystore = new Keystore(masterPassword);
   const policy = new PolicyEngine(policyPath);
   const audit = new AuditLogger();
   const rateLimiter = new RateLimiter();
+
+  // Patch audit logger to also post entries to cloud (fire-and-forget)
+  const _localLog = audit.log.bind(audit);
+  audit.log = (entry: AuditEntry) => {
+    _localLog(entry);
+    postCloudAuditLog(entry);
+  };
   const ttlStore = new TtlStore();
 
   // Watch policy file for changes and hot-reload on edit
@@ -139,14 +204,6 @@ async function main(): Promise<void> {
     }
   });
 
-  // Verify master password early (fail fast on wrong password)
-  if (!keystore.verifyPassword()) {
-    process.stderr.write(
-      "Error: AXIS_MASTER_PASSWORD is incorrect — could not decrypt keystore.\n"
-    );
-    process.exit(1);
-  }
-
   // Create MCP server
   const server = new Server(
     { name: "axis", version: "0.1.0" },
@@ -157,7 +214,7 @@ async function main(): Promise<void> {
   // List tools handler
   // ---------------------------------------------------------------------------
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [REQUEST_CREDENTIAL_TOOL],
+    tools: [EXECUTE_ACTION_TOOL],
   }));
 
   // ---------------------------------------------------------------------------
@@ -166,7 +223,7 @@ async function main(): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
-    if (name !== "request_credential") {
+    if (name !== "execute_action") {
       return {
         content: [
           {

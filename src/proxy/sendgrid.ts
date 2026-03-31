@@ -15,7 +15,7 @@
  *   - Request body is built from validated + sanitized params only.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -170,7 +170,7 @@ async function sendgridFetch(
 
 async function proxyMailSend(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: MailSendParams;
   try {
@@ -216,7 +216,7 @@ async function proxyMailSend(
 export async function proxySendGridAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "mail.send":

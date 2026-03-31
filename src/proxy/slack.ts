@@ -15,7 +15,7 @@
  *   - Request body is built from validated + sanitized params only.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -159,7 +159,7 @@ async function slackFetch(
 
 async function proxyChatPostMessage(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: ChatPostMessageParams;
   try {
@@ -188,7 +188,7 @@ async function proxyChatPostMessage(
 
 async function proxyConversationsList(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: ConversationsListParams;
   try {
@@ -227,7 +227,7 @@ async function proxyConversationsList(
 export async function proxySlackAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "chat.postMessage":

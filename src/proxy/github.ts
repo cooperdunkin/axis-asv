@@ -15,7 +15,7 @@
  *   - Request body is built from validated + sanitized params only.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,7 +199,7 @@ async function githubFetch(
 // Action proxy functions
 // ---------------------------------------------------------------------------
 
-async function proxyReposGet(params: unknown, keystore: Keystore): Promise<ProxyResponse> {
+async function proxyReposGet(params: unknown, keystore: SecretStore): Promise<ProxyResponse> {
   let validated: ReposGetParams;
   try {
     validated = validateReposGetParams(params);
@@ -221,7 +221,7 @@ async function proxyReposGet(params: unknown, keystore: Keystore): Promise<Proxy
   return result;
 }
 
-async function proxyIssuesCreate(params: unknown, keystore: Keystore): Promise<ProxyResponse> {
+async function proxyIssuesCreate(params: unknown, keystore: SecretStore): Promise<ProxyResponse> {
   let validated: IssueCreateParams;
   try {
     validated = validateIssueCreateParams(params);
@@ -244,7 +244,7 @@ async function proxyIssuesCreate(params: unknown, keystore: Keystore): Promise<P
   return result;
 }
 
-async function proxyPullsCreate(params: unknown, keystore: Keystore): Promise<ProxyResponse> {
+async function proxyPullsCreate(params: unknown, keystore: SecretStore): Promise<ProxyResponse> {
   let validated: PullsCreateParams;
   try {
     validated = validatePullsCreateParams(params);
@@ -267,7 +267,7 @@ async function proxyPullsCreate(params: unknown, keystore: Keystore): Promise<Pr
   return result;
 }
 
-async function proxyContentsRead(params: unknown, keystore: Keystore): Promise<ProxyResponse> {
+async function proxyContentsRead(params: unknown, keystore: SecretStore): Promise<ProxyResponse> {
   let validated: ContentsReadParams;
   try {
     validated = validateContentsReadParams(params);
@@ -297,7 +297,7 @@ async function proxyContentsRead(params: unknown, keystore: Keystore): Promise<P
 export async function proxyGitHubAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "repos.get":

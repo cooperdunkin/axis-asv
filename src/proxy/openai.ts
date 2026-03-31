@@ -15,7 +15,7 @@
  *   - Request body is built from validated params only.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 import { proxyAnthropicMessages } from "./anthropic.js";
 import { proxyGitHubAction } from "./github.js";
 import { proxyStripeAction } from "./stripe.js";
@@ -83,7 +83,7 @@ function validateParams(params: unknown): OpenAIProxyParams {
  */
 export async function proxyOpenAIResponses(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   // 1. Validate params
   let validated: OpenAIProxyParams;
@@ -180,7 +180,7 @@ export async function proxyRequest(
   service: string,
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   if (service === "openai" && action === "responses.create") {
     return proxyOpenAIResponses(params, keystore);

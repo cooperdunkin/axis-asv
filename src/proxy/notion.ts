@@ -15,7 +15,7 @@
  *   - Request body is built from validated + sanitized params only.
  */
 
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -171,7 +171,7 @@ async function notionFetch(
 
 async function proxyPagesCreate(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: PagesCreateParams;
   try {
@@ -206,7 +206,7 @@ async function proxyPagesCreate(
 
 async function proxyDatabasesQuery(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: DatabasesQueryParams;
   try {
@@ -240,7 +240,7 @@ async function proxyDatabasesQuery(
 export async function proxyNotionAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "pages.create":

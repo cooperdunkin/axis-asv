@@ -19,7 +19,7 @@
  */
 
 import * as crypto from "crypto";
-import { Keystore } from "../vault/keystore.js";
+import { SecretStore } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -282,7 +282,7 @@ async function awsS3Fetch(
 
 async function proxyS3GetObject(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: S3GetObjectParams;
   try {
@@ -328,7 +328,7 @@ async function proxyS3GetObject(
 
 async function proxyS3PutObject(
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   let validated: S3PutObjectParams;
   try {
@@ -379,7 +379,7 @@ async function proxyS3PutObject(
 export async function proxyAWSAction(
   action: string,
   params: unknown,
-  keystore: Keystore
+  keystore: SecretStore
 ): Promise<ProxyResponse> {
   switch (action) {
     case "s3.getObject":
