@@ -416,7 +416,11 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((err) => {
-  process.stderr.write(`[Axis] Fatal error: ${(err as Error).message}\n`);
-  process.exit(1);
-});
+// Only start the server when run directly (not when imported for testing)
+const isMain = require.main === module || process.argv[1]?.endsWith("server.js");
+if (isMain) {
+  main().catch((err) => {
+    process.stderr.write(`[Axis] Fatal error: ${(err as Error).message}\n`);
+    process.exit(1);
+  });
+}
