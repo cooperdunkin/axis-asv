@@ -668,7 +668,7 @@ async function cmdDeny(args: string[]): Promise<void> {
 
 function printHelp(): void {
   print(`
-Axis v0.4.0
+Axis v0.5.0
 
 Usage:
   axis <command> [args]

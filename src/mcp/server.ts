@@ -318,7 +318,7 @@ async function main(): Promise<void> {
 
   // Create MCP server
   const server = new Server(
-    { name: "axis", version: "0.4.0" },
+    { name: "axis", version: "0.5.0" },
     { capabilities: { tools: {} } }
   );
 

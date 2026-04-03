@@ -1,6 +1,6 @@
 {
   "name": "axis-asv",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "An agent secrets vault (ASV) for AI agents — credentials stay server-side, agents never see raw keys",
   "main": "dist/cli/index.js",
   "bin": {
