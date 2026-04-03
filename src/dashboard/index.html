@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Axis Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@19/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@19/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: '#08090c',
+            surface: '#111318',
+            border: '#1e2028',
+            accent: '#e8d5b0',
+            text: '#eef0f4',
+            muted: '#8b8d94',
+            green: '#4ade80',
+            red: '#f87171',
+            yellow: '#fbbf24',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background: #08090c; color: #eef0f4; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111318; }
+    ::-webkit-scrollbar-thumb { background: #1e2028; border-radius: 3px; }
+    .tab-active { border-bottom: 2px solid #e8d5b0; color: #e8d5b0; }
+    .tab-inactive { border-bottom: 2px solid transparent; color: #8b8d94; }
+    .tab-inactive:hover { color: #eef0f4; }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .pulse { animation: pulse-dot 2s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ── API helpers ──────────────────────────────────────────────
+    const api = (path) => fetch(path).then(r => r.json());
+
+    // ── Badge component ─────────────────────────────────────────
+    function Badge({ label, color }) {
+      const colors = {
+        green: 'bg-green/20 text-green',
+        red: 'bg-red/20 text-red',
+        yellow: 'bg-yellow/20 text-yellow',
+        muted: 'bg-muted/20 text-muted',
+      };
+      return (
+        <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[color] || colors.muted}`}>
+          {label}
+        </span>
+      );
+    }
+
+    // ── Stat Card ───────────────────────────────────────────────
+    function StatCard({ label, value, color }) {
+      const textColor = color === 'green' ? 'text-green' : color === 'red' ? 'text-red' : color === 'yellow' ? 'text-yellow' : 'text-accent';
+      return (
+        <div className="bg-surface border border-border rounded-lg p-4">
+          <div className="text-muted text-sm mb-1">{label}</div>
+          <div className={`text-2xl font-semibold ${textColor}`}>{value}</div>
+        </div>
+      );
+    }
+
+    // ── Overview Tab ────────────────────────────────────────────
+    function OverviewTab() {
+      const [health, setHealth] = useState(null);
+      const [stats, setStats] = useState(null);
+      const [services, setServices] = useState(null);
+
+      useEffect(() => {
+        api('/api/health').then(setHealth);
+        api('/api/stats').then(setStats);
+        api('/api/services').then(setServices);
+      }, []);
+
+      if (!health || !stats || !services) return <div className="text-muted p-8">Loading...</div>;
+
+      const maxByService = Math.max(...Object.values(stats.byService).map(Number), 1);
+
+      return (
+        <div className="space-y-6">
+          <div className="grid grid-cols-4 gap-4">
+            <StatCard label="Total Requests" value={stats.total} />
+            <StatCard label="Allowed" value={stats.allowed} color="green" />
+            <StatCard label="Denied" value={stats.denied} color="red" />
+            <StatCard label="Errors" value={stats.errors} color="yellow" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-6">
+            <div className="bg-surface border border-border rounded-lg p-5">
+              <h3 className="text-sm font-medium text-muted mb-4">Health Checks</h3>
+              <div className="space-y-2">
+                {health.checks.map((c, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span>{c.name}</span>
+                    <span className={c.ok ? 'text-green' : 'text-red'}>{c.ok ? 'Pass' : 'Fail'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-surface border border-border rounded-lg p-5">
+              <h3 className="text-sm font-medium text-muted mb-4">Credentials</h3>
+              <div className="text-3xl font-semibold text-accent mb-1">
+                {services.count}<span className="text-lg text-muted">/{services.limit}</span>
+              </div>
+              <div className="text-sm text-muted mb-4">Free tier</div>
+
+              <h3 className="text-sm font-medium text-muted mb-3 mt-6">Requests by Service</h3>
+              <div className="space-y-2">
+                {Object.entries(stats.byService).map(([svc, count]) => (
+                  <div key={svc}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span>{svc}</span>
+                      <span className="text-muted">{String(count)}</span>
+                    </div>
+                    <div className="h-2 bg-border rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-accent rounded-full"
+                        style={{ width: `${(Number(count) / maxByService) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+                {Object.keys(stats.byService).length === 0 && (
+                  <div className="text-sm text-muted">No requests yet</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Audit Log Tab ───────────────────────────────────────────
+    function AuditLogTab() {
+      const [logs, setLogs] = useState(null);
+      const [lastN, setLastN] = useState(50);
+      const [serviceFilter, setServiceFilter] = useState('');
+      const [decisionFilter, setDecisionFilter] = useState('');
+      const [autoRefresh, setAutoRefresh] = useState(false);
+      const [expandedRow, setExpandedRow] = useState(null);
+      const intervalRef = useRef(null);
+
+      const fetchLogs = () => {
+        let url = `/api/logs?last=${lastN}`;
+        if (serviceFilter) url += `&service=${serviceFilter}`;
+        if (decisionFilter) url += `&decision=${decisionFilter}`;
+        api(url).then(setLogs);
+      };
+
+      useEffect(() => { fetchLogs(); }, [lastN, serviceFilter, decisionFilter]);
+
+      useEffect(() => {
+        if (autoRefresh) {
+          intervalRef.current = setInterval(fetchLogs, 5000);
+        } else if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+        }
+        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+      }, [autoRefresh, lastN, serviceFilter, decisionFilter]);
+
+      if (!logs) return <div className="text-muted p-8">Loading...</div>;
+
+      const decisionColor = (d) => d === 'allow' ? 'green' : d === 'deny' ? 'red' : 'yellow';
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center gap-4 flex-wrap">
+            <select
+              className="bg-surface border border-border rounded px-3 py-1.5 text-sm text-text"
+              value={serviceFilter}
+              onChange={e => setServiceFilter(e.target.value)}
+            >
+              <option value="">All services</option>
+              {[...new Set(logs.entries.map(e => e.service))].map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+
+            <select
+              className="bg-surface border border-border rounded px-3 py-1.5 text-sm text-text"
+              value={decisionFilter}
+              onChange={e => setDecisionFilter(e.target.value)}
+            >
+              <option value="">All decisions</option>
+              <option value="allow">Allow</option>
+              <option value="deny">Deny</option>
+              <option value="error">Error</option>
+            </select>
+
+            <select
+              className="bg-surface border border-border rounded px-3 py-1.5 text-sm text-text"
+              value={lastN}
+              onChange={e => setLastN(Number(e.target.value))}
+            >
+              <option value={25}>Last 25</option>
+              <option value={50}>Last 50</option>
+              <option value={100}>Last 100</option>
+              <option value={500}>Last 500</option>
+            </select>
+
+            <label className="flex items-center gap-2 text-sm text-muted cursor-pointer ml-auto">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={e => setAutoRefresh(e.target.checked)}
+                className="accent-accent"
+              />
+              Auto-refresh (5s)
+            </label>
+
+            <span className="text-sm text-muted">{logs.total} total entries</span>
+          </div>
+
+          <div className="bg-surface border border-border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-muted text-left">
+                  <th className="px-4 py-3 font-medium">Timestamp</th>
+                  <th className="px-4 py-3 font-medium">Identity</th>
+                  <th className="px-4 py-3 font-medium">Service</th>
+                  <th className="px-4 py-3 font-medium">Action</th>
+                  <th className="px-4 py-3 font-medium">Decision</th>
+                  <th className="px-4 py-3 font-medium">Latency</th>
+                  <th className="px-4 py-3 font-medium">Request ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.entries.slice().reverse().map((entry, i) => (
+                  <React.Fragment key={entry.request_id || i}>
+                    <tr
+                      className="border-b border-border hover:bg-border/30 cursor-pointer"
+                      onClick={() => setExpandedRow(expandedRow === i ? null : i)}
+                    >
+                      <td className="px-4 py-2.5 text-muted font-mono text-xs">
+                        {new Date(entry.timestamp).toLocaleTimeString()}
+                      </td>
+                      <td className="px-4 py-2.5">{entry.identity}</td>
+                      <td className="px-4 py-2.5 font-medium">{entry.service}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs">{entry.action}</td>
+                      <td className="px-4 py-2.5">
+                        <Badge label={entry.decision} color={decisionColor(entry.decision)} />
+                      </td>
+                      <td className="px-4 py-2.5 text-muted">
+                        {entry.latency_ms != null ? `${entry.latency_ms}ms` : '-'}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-muted">
+                        {(entry.request_id || '').slice(0, 8)}
+                      </td>
+                    </tr>
+                    {expandedRow === i && (
+                      <tr className="border-b border-border">
+                        <td colSpan={7} className="px-4 py-3 bg-bg">
+                          <pre className="text-xs text-muted overflow-auto max-h-48">
+                            {JSON.stringify(entry, null, 2)}
+                          </pre>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+                {logs.entries.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted">
+                      No audit log entries. Make some requests through Axis to see them here.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Services Tab ────────────────────────────────────────────
+    function ServicesTab() {
+      const [services, setServices] = useState(null);
+      const [policy, setPolicy] = useState(null);
+
+      useEffect(() => {
+        api('/api/services').then(setServices);
+        api('/api/policy').then(setPolicy);
+      }, []);
+
+      if (!services) return <div className="text-muted p-8">Loading...</div>;
+
+      const policyServices = new Set();
+      if (policy && policy.rules) {
+        policy.rules.forEach(r => {
+          if (r.allow) r.allow.forEach(a => policyServices.add(a.service));
+        });
+      }
+
+      if (services.services.length === 0) {
+        return (
+          <div className="bg-surface border border-border rounded-lg p-12 text-center">
+            <div className="text-muted text-lg mb-2">No credentials stored</div>
+            <div className="text-sm text-muted">
+              Run <code className="bg-border px-2 py-0.5 rounded text-accent">axis add &lt;service&gt;</code> to store your first credential.
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="grid grid-cols-3 gap-4">
+          {services.services.map(svc => (
+            <div key={svc.service} className="bg-surface border border-border rounded-lg p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-lg">{svc.service}</h3>
+                {policyServices.has(svc.service) ? (
+                  <Badge label="Policy active" color="green" />
+                ) : (
+                  <Badge label="No policy" color="yellow" />
+                )}
+              </div>
+              <div className="space-y-1 text-sm text-muted">
+                {svc.createdAt && (
+                  <div>Created: {new Date(svc.createdAt).toLocaleDateString()}</div>
+                )}
+                {svc.updatedAt && (
+                  <div>Updated: {new Date(svc.updatedAt).toLocaleDateString()}</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ── Policy Tab ──────────────────────────────────────────────
+    function PolicyTab() {
+      const [policy, setPolicy] = useState(null);
+
+      useEffect(() => { api('/api/policy').then(setPolicy); }, []);
+
+      if (!policy) return <div className="text-muted p-8">Loading...</div>;
+
+      if (policy.error) {
+        return (
+          <div className="bg-surface border border-border rounded-lg p-12 text-center">
+            <div className="text-muted">{policy.error}</div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 text-sm text-muted">
+            <span>Policy file: <code className="bg-border px-2 py-0.5 rounded text-accent">{policy.path}</code></span>
+            <span className="text-xs">Policy hot-reloads on save</span>
+          </div>
+
+          {policy.rules.map((rule, i) => (
+            <div key={i} className="bg-surface border border-border rounded-lg p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <h3 className="font-semibold">Identity: <span className="text-accent">{rule.identity}</span></h3>
+                {rule.rateLimit && (
+                  <Badge label={`${rule.rateLimit.requestsPerMinute} req/min`} color="muted" />
+                )}
+                {rule.ttl && (
+                  <Badge label={`TTL: ${rule.ttl}s`} color="muted" />
+                )}
+              </div>
+
+              {rule.allow && rule.allow.length > 0 ? (
+                <div className="space-y-2">
+                  {rule.allow.map((a, j) => (
+                    <div key={j} className="flex items-center gap-3 text-sm">
+                      <span className="font-medium w-24">{a.service}</span>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {a.actions.map((act, k) => (
+                          <code key={k} className="bg-border px-2 py-0.5 rounded text-xs text-accent">{act}</code>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-muted">No allow rules</div>
+              )}
+            </div>
+          ))}
+
+          {policy.rules.length === 0 && (
+            <div className="bg-surface border border-border rounded-lg p-12 text-center text-muted">
+              No policy rules defined. All requests will be denied.
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── App ─────────────────────────────────────────────────────
+    function App() {
+      const [tab, setTab] = useState('overview');
+      const [health, setHealth] = useState(null);
+
+      useEffect(() => { api('/api/health').then(setHealth); }, []);
+
+      const tabs = [
+        { id: 'overview', label: 'Overview' },
+        { id: 'logs', label: 'Audit Log' },
+        { id: 'services', label: 'Services' },
+        { id: 'policy', label: 'Policy' },
+      ];
+
+      return (
+        <div className="min-h-screen">
+          {/* Header */}
+          <header className="border-b border-border px-6 py-4">
+            <div className="max-w-6xl mx-auto flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-semibold tracking-tight">
+                  <span className="text-accent">Axis</span> Dashboard
+                </h1>
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-2 h-2 rounded-full pulse ${health?.ok ? 'bg-green' : 'bg-red'}`} />
+                  <span className="text-xs text-muted">{health?.ok ? 'Healthy' : 'Issues'}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted bg-surface border border-border rounded px-2 py-1">
+                  Local only &mdash; 127.0.0.1:3847
+                </span>
+              </div>
+            </div>
+          </header>
+
+          {/* Tabs */}
+          <nav className="border-b border-border px-6">
+            <div className="max-w-6xl mx-auto flex gap-6">
+              {tabs.map(t => (
+                <button
+                  key={t.id}
+                  className={`py-3 px-1 text-sm font-medium transition-colors ${tab === t.id ? 'tab-active' : 'tab-inactive'}`}
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </nav>
+
+          {/* Content */}
+          <main className="max-w-6xl mx-auto p-6">
+            {tab === 'overview' && <OverviewTab />}
+            {tab === 'logs' && <AuditLogTab />}
+            {tab === 'services' && <ServicesTab />}
+            {tab === 'policy' && <PolicyTab />}
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

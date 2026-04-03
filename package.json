@@ -1,6 +1,6 @@
 {
   "name": "axis-asv",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "An agent secrets vault (ASV) for AI agents — credentials stay server-side, agents never see raw keys",
   "main": "dist/cli/index.js",
   "bin": {
@@ -19,6 +19,7 @@
   "homepage": "https://axisproxy.com/",
   "scripts": {
     "build": "tsc",
+    "postbuild": "mkdir -p dist/dashboard && cp src/dashboard/index.html dist/dashboard/index.html",
     "build:watch": "tsc --watch",
     "start:mcp": "AXIS_IDENTITY=local-dev node dist/mcp/server.js",
     "test": "npx tsx src/tests/index.ts",
@@ -28,11 +29,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.8.0",
+    "express": "^5.2.1",
     "js-yaml": "^4.1.0",
     "keytar": "^7.9.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/keytar": "^4.4.0",
     "@types/node": "^22.0.0",
@@ -50,5 +53,5 @@
     "ai-agents",
     "credentials"
   ],
-  "license": "BUSL-1.1"
+  "license": "MIT"
 }

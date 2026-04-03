@@ -172,22 +172,188 @@ async function cmdInit(): Promise<void> {
   print("  axis mcp           — start the MCP server");
 }
 
-/** axis add <service> */
-async function cmdAdd(service: string): Promise<void> {
+/** axis setup — interactive first-run wizard */
+async function cmdSetup(): Promise<void> {
+  print("");
+  print("┌─────────────────────────────────────────┐");
+  print("│          Axis — First-Time Setup         │");
+  print("└─────────────────────────────────────────┘");
+  print("");
+
+  // ── Step 1: Init ──────────────────────────────────────────────
+  print("Step 1/4 — Initializing Axis\n");
+  const home = axisHome();
+  const configDir = path.resolve(process.cwd(), "config");
+  const dataDir = path.resolve(process.cwd(), "data");
+  const policyFile = defaultPolicyPath();
+
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true });
+
+  if (!fs.existsSync(policyFile)) {
+    fs.writeFileSync(policyFile, DEFAULT_POLICY_YAML, { mode: 0o644 });
+  }
+
+  const gitkeep = path.join(dataDir, ".gitkeep");
+  if (!fs.existsSync(gitkeep)) {
+    fs.writeFileSync(gitkeep, "");
+  }
+  print("  ✓ Config directories created\n");
+
+  // ── Step 2: Master password ───────────────────────────────────
+  print("Step 2/4 — Set your master password\n");
+  print("  This encrypts all your secrets locally with AES-256-GCM.");
+  print("  Minimum 8 characters. You'll need this to start the MCP server.\n");
+
+  const masterPw = await promptMasterPassword("  Master password", true);
+  const confirmPw = await promptMasterPassword("  Confirm password");
+  if (masterPw !== confirmPw) {
+    die("Passwords do not match. Run axis setup again.");
+  }
+  print("");
+
+  // Store in keychain if possible
+  let keychainStored = false;
+  try {
+    await keychainSet(masterPw);
+    keychainStored = true;
+    print("  ✓ Master password stored in OS keychain");
+  } catch {
+    print("  · OS keychain not available — you'll need AXIS_MASTER_PASSWORD env var");
+  }
+  print("");
+
+  // ── Step 3: First credential ──────────────────────────────────
+  print("Step 3/4 — Store your first API key\n");
+  print("  Which service do you want to add? Common choices:");
+  print("    openai, anthropic, github, stripe, slack, sendgrid,");
+  print("    notion, linear, twilio, aws, gcp\n");
+
+  const service = await prompt("  Service name: ");
+  if (!service || service.trim().length === 0) {
+    die("Service name required. Run axis setup again.");
+  }
+
+  const serviceName = service.trim().toLowerCase();
+  let secretValue: string;
+  if (serviceName === "openai") {
+    secretValue = await prompt("  OpenAI API key (sk-...): ", true);
+  } else if (serviceName === "anthropic") {
+    secretValue = await prompt("  Anthropic API key (sk-ant-...): ", true);
+  } else if (serviceName === "github") {
+    secretValue = await prompt("  GitHub personal access token (ghp_...): ", true);
+  } else {
+    secretValue = await prompt(`  Secret value for ${serviceName}: `, true);
+  }
+
+  if (!secretValue || secretValue.trim().length === 0) {
+    die("Secret must not be empty.");
+  }
+
+  const ks = new Keystore(masterPw);
+  ks.setSecret(serviceName, secretValue);
+  secretValue = "";
+  print(`\n  ✓ ${serviceName} credential encrypted and stored\n`);
+
+  // Update policy to allow this service
+  try {
+    const identity = process.env["AXIS_IDENTITY"] ?? "local-dev";
+    const policy = new PolicyEngine();
+    policy.addAllowRule(identity, serviceName, ["*"]);
+    print(`  ✓ Policy updated: ${identity} → ${serviceName}/*\n`);
+  } catch {
+    print("  · Could not update policy — add rules manually to config/policy.yaml\n");
+  }
+
+  // ── Step 4: MCP config ────────────────────────────────────────
+  print("Step 4/4 — Configure your MCP host\n");
+
+  const mcpConfig = keychainStored
+    ? {
+        mcpServers: {
+          axis: {
+            command: "axis",
+            args: ["mcp"],
+            env: {
+              AXIS_IDENTITY: "local-dev",
+            },
+          },
+        },
+      }
+    : {
+        mcpServers: {
+          axis: {
+            command: "axis",
+            args: ["mcp"],
+            env: {
+              AXIS_IDENTITY: "local-dev",
+              AXIS_MASTER_PASSWORD: "<your-master-password>",
+            },
+          },
+        },
+      };
+
+  print("  Add this to your MCP config:\n");
+  print("  Claude Code:  ~/.claude.json or .mcp.json");
+  print("  Cursor:       ~/.cursor/mcp.json\n");
+  print("  ┌─── .mcp.json ───────────────────────────────────────");
+  const configLines = JSON.stringify(mcpConfig, null, 2).split("\n");
+  for (const line of configLines) {
+    print(`  │ ${line}`);
+  }
+  print("  └──────────────────────────────────────────────────────\n");
+
+  // ── Done ──────────────────────────────────────────────────────
+  print("┌─────────────────────────────────────────┐");
+  print("│            Setup complete ✓              │");
+  print("└─────────────────────────────────────────┘");
+  print("");
+  print("  Your agent can now call:");
+  print(`    execute_action({ service: "${serviceName}", action: "...", ... })`);
+  print("");
+  print("  Useful commands:");
+  print("    axis add <service>   — add more credentials");
+  print("    axis doctor          — verify everything works");
+  print("    axis logs --tail     — watch requests in real time");
+  print("    axis dashboard       — open the local web dashboard");
+  print("");
+}
+
+/** axis add <service> [--stdin] */
+async function cmdAdd(service: string, args: string[] = []): Promise<void> {
   if (!service) die("Usage: axis add <service>  (e.g. axis add openai)");
 
+  const useStdin = args.includes("--stdin");
   print(`Adding secret for service: ${service}`);
 
   // Enforce minimum password length when creating a new keystore (first secret)
   const ksExists = fs.existsSync(keystorePath());
   const isFirstSecret = !ksExists || new Keystore("").listServices().length === 0;
-  const masterPw = await promptMasterPassword("", isFirstSecret);
+
+  let masterPw: string;
+  if (useStdin && process.env["AXIS_MASTER_PASSWORD"]) {
+    masterPw = process.env["AXIS_MASTER_PASSWORD"];
+  } else {
+    masterPw = await promptMasterPassword("", isFirstSecret);
+  }
 
   let secretValue: string;
-  if (service === "openai") {
-    secretValue = await prompt("OpenAI API key (sk-...): ", true);
+  if (useStdin) {
+    // Read secret from stdin (piped input)
+    secretValue = await new Promise<string>((resolve, reject) => {
+      let data = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", (chunk) => { data += chunk; });
+      process.stdin.on("end", () => resolve(data.trim()));
+      process.stdin.on("error", reject);
+    });
   } else {
-    secretValue = await prompt(`Secret value for ${service}: `, true);
+    if (service === "openai") {
+      secretValue = await prompt("OpenAI API key (sk-...): ", true);
+    } else {
+      secretValue = await prompt(`Secret value for ${service}: `, true);
+    }
   }
 
   if (!secretValue || secretValue.trim().length === 0) {
@@ -662,23 +828,55 @@ async function cmdDeny(args: string[]): Promise<void> {
   }
 }
 
+/** axis dashboard — start the local web dashboard */
+async function cmdDashboard(): Promise<void> {
+  // Resolve master password (same logic as MCP server)
+  const envPassword = process.env["AXIS_MASTER_PASSWORD"];
+  let masterPw: string;
+
+  if (envPassword && envPassword.trim().length > 0) {
+    masterPw = envPassword;
+  } else {
+    // Try keychain
+    let keychainPw: string | null = null;
+    try {
+      keychainPw = await keychainGet();
+    } catch {
+      // keychain unavailable
+    }
+
+    if (keychainPw) {
+      masterPw = keychainPw;
+    } else {
+      masterPw = await promptMasterPassword();
+    }
+  }
+
+  // Dynamically import to avoid loading express for non-dashboard commands
+  const { startDashboard } = await import("../dashboard/server.js");
+  await startDashboard(masterPw);
+}
+
 // ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
 
 function printHelp(): void {
   print(`
-Axis v0.5.0
+Axis v0.6.0
 
 Usage:
   axis <command> [args]
 
 Commands:
+  setup             Interactive first-run wizard (init + add + keychain + MCP config)
   init              Create config directories and default policy.yaml
   add <service>     Store an encrypted secret for a service (e.g. openai)
+                      --stdin             Read secret from stdin (for CI/scripts)
   list              List stored service names and metadata (no secrets)
   revoke <service>  Delete the stored secret for a service
   doctor            Run health checks on config, crypto, and keystore
+  dashboard         Open the local web dashboard (http://localhost:3847)
   mcp               Start the MCP server (reads master password from keychain or AXIS_MASTER_PASSWORD)
   logs              Show audit log entries (newest last, default 50)
                       --last <n>          Show last N entries
@@ -725,9 +923,11 @@ function showFirstRunMessageIfNeeded(command: string): void {
 
   // Show once, then mark as seen
   print("");
-  print("👋 New to Axis? Tell us how you're using it — it takes 30 seconds and");
-  print("   helps shape what gets built next:");
-  print("   https://github.com/cooperdunkin/axis/issues/new?template=user-feedback.md&title=How+I%27m+using+Axis");
+  print("👋 First time using Axis? Run:");
+  print("   axis setup");
+  print("");
+  print("   This wizard walks you through init, credential storage,");
+  print("   keychain setup, and MCP configuration in under 90 seconds.");
   print("");
 
   try {
@@ -748,11 +948,14 @@ async function main(): Promise<void> {
   showFirstRunMessageIfNeeded(command ?? "");
 
   switch (command) {
+    case "setup":
+      await cmdSetup();
+      break;
     case "init":
       await cmdInit();
       break;
     case "add":
-      await cmdAdd(rest[0] ?? "");
+      await cmdAdd(rest[0] ?? "", rest.slice(1));
       break;
     case "list":
       await cmdList();
@@ -762,6 +965,9 @@ async function main(): Promise<void> {
       break;
     case "doctor":
       await cmdDoctor();
+      break;
+    case "dashboard":
+      await cmdDashboard();
       break;
     case "mcp":
       cmdMcp();

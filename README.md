@@ -1,7 +1,7 @@
 # Axis
 
 [![npm version](https://img.shields.io/npm/v/axis-asv.svg)](https://www.npmjs.com/package/axis-asv)
-[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Website](https://img.shields.io/badge/website-axisproxy.com-brightgreen)](https://axisproxy.com/)
 
 **Your AI agent can read your `.env` file. Axis stops that.**
@@ -57,11 +57,7 @@ Axis is the missing primitive: **time-limited, action-scoped credential access w
 
 ---
 
-## 5-Minute Setup
-
-### Prerequisites
-
-- Node.js 20+
+## Quick Start
 
 ### 1. Install
 
@@ -69,13 +65,49 @@ Axis is the missing primitive: **time-limited, action-scoped credential access w
 npm install -g axis-asv
 ```
 
-### 2. Initialize
+### 2. Run the setup wizard
+
+```bash
+axis setup
+```
+
+The wizard walks you through:
+1. Creating config directories
+2. Setting your master password (stored in OS keychain)
+3. Encrypting your first API key
+4. Generating your MCP config
+
+Total time: ~60 seconds.
+
+### 3. Add MCP config to your editor
+
+Copy the config the wizard outputs into your MCP host config file:
+
+- **Claude Code:** `~/.claude.json` or `.mcp.json` (project-level)
+- **Cursor:** `~/.cursor/mcp.json`
+
+### 4. Verify
+
+```bash
+axis doctor
+```
+
+---
+
+<details>
+<summary><strong>Manual Setup</strong> (step-by-step)</summary>
+
+#### Prerequisites
+
+- Node.js 20+
+
+#### 1. Initialize
 
 ```bash
 axis init
 ```
 
-### 3. Store your first credential
+#### 2. Store your first credential
 
 ```bash
 axis add openai
@@ -85,7 +117,7 @@ You'll be prompted for:
 1. Your **master password** — used to encrypt the key locally
 2. Your **OpenAI API key** (`sk-...`)
 
-### 4. Store master password in OS keychain
+#### 3. Store master password in OS keychain
 
 ```bash
 axis keychain set
@@ -93,11 +125,9 @@ axis keychain set
 
 This stores your master password in the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager) so Axis can start without a plaintext password in config.
 
-### 5. Configure your MCP host
+#### 4. Configure your MCP host
 
-#### Claude Code
-
-Add to `~/.claude.json` (global) or `.mcp.json` (project-level):
+**Claude Code** — Add to `~/.claude.json` (global) or `.mcp.json` (project-level):
 
 ```json
 {
@@ -115,9 +145,7 @@ Add to `~/.claude.json` (global) or `.mcp.json` (project-level):
 
 Axis reads the master password from your OS keychain automatically. If you prefer to use an environment variable instead, add `"AXIS_MASTER_PASSWORD": "your-password"` to the `env` block above.
 
-#### Cursor
-
-Add to `~/.cursor/mcp.json` or your project's `.cursor/mcp.json`:
+**Cursor** — Add to `~/.cursor/mcp.json` or your project's `.cursor/mcp.json`:
 
 ```json
 {
@@ -133,11 +161,13 @@ Add to `~/.cursor/mcp.json` or your project's `.cursor/mcp.json`:
 }
 ```
 
-### 6. Verify
+#### 5. Verify
 
 ```bash
 axis doctor
 ```
+
+</details>
 
 ---
 
@@ -284,6 +314,37 @@ sudo dnf install libsecret-devel
 
 ---
 
+## Dashboard
+
+Axis includes a local web dashboard for monitoring and inspecting your vault.
+
+```bash
+axis dashboard
+```
+
+Opens `http://localhost:3847` in your browser. The dashboard shows:
+
+- **Health status** — same checks as `axis doctor`
+- **Audit log** — searchable, filterable, auto-refreshing
+- **Stored services** — credential inventory (no secrets shown)
+- **Policy rules** — current deny/allow configuration
+
+The dashboard runs locally and binds to `127.0.0.1` only — it is never exposed to the network.
+
+---
+
+## CI/CD Integration
+
+Axis works in CI environments. Use `--stdin` to pipe secrets non-interactively:
+
+```bash
+echo "$OPENAI_API_KEY" | axis add openai --stdin
+```
+
+Set `AXIS_MASTER_PASSWORD` as a CI secret. See [docs/ci-guide.md](docs/ci-guide.md) for full GitHub Actions examples.
+
+---
+
 ## Threat Model
 
 ### What Axis protects against
@@ -327,4 +388,4 @@ npm run lint          # type-check without emitting
 
 ## License
 
-BUSL-1.1 — [axisproxy.com](https://axisproxy.com)
+MIT — [axisproxy.com](https://axisproxy.com)

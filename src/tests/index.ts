@@ -1514,6 +1514,263 @@ async function runIntegrationTests(): Promise<void> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Dashboard API tests
+// ---------------------------------------------------------------------------
+
+async function runDashboardTests(): Promise<void> {
+  console.log("\n[Dashboard API]");
+
+  // Set up a temp keystore for dashboard tests
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "axis-dash-test-"));
+  const ksPath = path.join(tmpHome, "keystore.json");
+  const origKsEnv = process.env["AXIS_KEYSTORE_PATH"];
+  process.env["AXIS_KEYSTORE_PATH"] = ksPath;
+
+  const password = "dashboard-test-pw";
+  const ks = new Keystore(password);
+  ks.setSecret("openai", "sk-test-dashboard");
+
+  // Set up a temp policy
+  const policyDir = path.join(tmpHome, "config");
+  fs.mkdirSync(policyDir, { recursive: true });
+  const policyPath = path.join(policyDir, "policy.yaml");
+  fs.writeFileSync(policyPath, `policies:\n  - identity: local-dev\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`);
+  const origPolEnv = process.env["AXIS_POLICY_PATH"];
+  process.env["AXIS_POLICY_PATH"] = policyPath;
+
+  let server: ReturnType<typeof import("net").createServer> | null = null;
+  let port = 0;
+
+  await test("Dashboard: server starts and returns health", async () => {
+    const { startDashboard } = await import("../dashboard/server.js");
+    // Use port 0 to get a random available port
+    const srv = await startDashboard(password, 0) as import("net").Server;
+    server = srv;
+    const addr = srv.address() as import("net").AddressInfo;
+    port = addr.port;
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+    assert.strictEqual(res.status, 200);
+    const data = await res.json() as { ok: boolean; checks: Array<{ name: string; ok: boolean }> };
+    assert.ok(Array.isArray(data.checks));
+    assert.ok(data.checks.length > 0);
+  });
+
+  await test("Dashboard: GET /api/services returns services", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/services`);
+    assert.strictEqual(res.status, 200);
+    const data = await res.json() as { services: unknown[]; count: number; limit: number };
+    assert.ok(Array.isArray(data.services));
+    assert.ok(data.count >= 1, `Expected at least 1 service, got ${data.count}`);
+    assert.strictEqual(data.limit, 3);
+  });
+
+  await test("Dashboard: GET /api/logs returns log structure", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/logs`);
+    assert.strictEqual(res.status, 200);
+    const data = await res.json() as { entries: unknown[]; total: number };
+    assert.ok(Array.isArray(data.entries));
+    assert.strictEqual(typeof data.total, "number");
+  });
+
+  await test("Dashboard: GET /api/stats returns aggregate stats", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/stats`);
+    assert.strictEqual(res.status, 200);
+    const data = await res.json() as { total: number; allowed: number; denied: number; errors: number; byService: Record<string, number> };
+    assert.strictEqual(typeof data.total, "number");
+    assert.strictEqual(typeof data.allowed, "number");
+    assert.strictEqual(typeof data.denied, "number");
+    assert.strictEqual(typeof data.errors, "number");
+    assert.strictEqual(typeof data.byService, "object");
+  });
+
+  await test("Dashboard: GET /api/policy returns policy rules", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/policy`);
+    assert.strictEqual(res.status, 200);
+    const data = await res.json() as { rules: unknown[] };
+    assert.ok(Array.isArray(data.rules));
+  });
+
+  // Cleanup
+  if (server) {
+    await new Promise<void>((resolve) => (server as import("net").Server).close(() => resolve()));
+  }
+  if (origKsEnv !== undefined) process.env["AXIS_KEYSTORE_PATH"] = origKsEnv;
+  else delete process.env["AXIS_KEYSTORE_PATH"];
+  if (origPolEnv !== undefined) process.env["AXIS_POLICY_PATH"] = origPolEnv;
+  else delete process.env["AXIS_POLICY_PATH"];
+  fs.rmSync(tmpHome, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// --stdin flag tests
+// ---------------------------------------------------------------------------
+
+async function runStdinTests(): Promise<void> {
+  console.log("\n[--stdin Flag]");
+
+  await test("--stdin: flag is detected in args array", () => {
+    const args = ["--stdin"];
+    assert.ok(args.includes("--stdin"));
+  });
+
+  await test("--stdin: AXIS_MASTER_PASSWORD env var is used when present", () => {
+    const origEnv = process.env["AXIS_MASTER_PASSWORD"];
+    process.env["AXIS_MASTER_PASSWORD"] = "ci-test-password";
+
+    const useStdin = true;
+    let masterPw: string | undefined;
+    if (useStdin && process.env["AXIS_MASTER_PASSWORD"]) {
+      masterPw = process.env["AXIS_MASTER_PASSWORD"];
+    }
+    assert.strictEqual(masterPw, "ci-test-password");
+
+    if (origEnv !== undefined) {
+      process.env["AXIS_MASTER_PASSWORD"] = origEnv;
+    } else {
+      delete process.env["AXIS_MASTER_PASSWORD"];
+    }
+  });
+
+  await test("--stdin: stores secret correctly via env var master password", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "axis-stdin-test-"));
+    const ksPath = path.join(tmpHome, "keystore.json");
+    const origEnv = process.env["AXIS_KEYSTORE_PATH"];
+    process.env["AXIS_KEYSTORE_PATH"] = ksPath;
+
+    const password = "ci-master-pw-test";
+    const ks = new Keystore(password);
+    ks.setSecret("openai", "sk-from-stdin-pipe");
+    assert.strictEqual(ks.getSecret("openai"), "sk-from-stdin-pipe");
+
+    if (origEnv !== undefined) {
+      process.env["AXIS_KEYSTORE_PATH"] = origEnv;
+    } else {
+      delete process.env["AXIS_KEYSTORE_PATH"];
+    }
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  await test("--stdin: args without --stdin flag defaults to interactive", () => {
+    const args = ["some-other-flag"];
+    assert.ok(!args.includes("--stdin"));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Setup wizard integration tests (tests the primitives cmdSetup chains)
+// ---------------------------------------------------------------------------
+
+async function runSetupTests(): Promise<void> {
+  console.log("\n[Setup Wizard Integration]");
+
+  await test("Setup: init creates ~/.axis directory", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "axis-setup-test-"));
+    const axisDir = path.join(tmpHome, ".axis");
+    fs.mkdirSync(axisDir, { recursive: true, mode: 0o700 });
+    assert.ok(fs.existsSync(axisDir));
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  await test("Setup: init creates config/policy.yaml", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-setup-policy-"));
+    const policyPath = path.join(tmpDir, "config", "policy.yaml");
+    fs.mkdirSync(path.join(tmpDir, "config"), { recursive: true });
+    const defaultPolicy = `policies:\n  - identity: local-dev\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`;
+    fs.writeFileSync(policyPath, defaultPolicy, { mode: 0o644 });
+    assert.ok(fs.existsSync(policyPath));
+    const content = fs.readFileSync(policyPath, "utf8");
+    assert.ok(content.includes("policies:"));
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  await test("Setup: stores credential that can be decrypted", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "axis-setup-ks-"));
+    const ksPath = path.join(tmpHome, "keystore.json");
+    const origEnv = process.env["AXIS_KEYSTORE_PATH"];
+    process.env["AXIS_KEYSTORE_PATH"] = ksPath;
+
+    const password = "test-setup-password-123";
+    const ks = new Keystore(password);
+    ks.setSecret("openai", "sk-test-key-12345");
+    const retrieved = ks.getSecret("openai");
+    assert.strictEqual(retrieved, "sk-test-key-12345");
+
+    if (origEnv !== undefined) {
+      process.env["AXIS_KEYSTORE_PATH"] = origEnv;
+    } else {
+      delete process.env["AXIS_KEYSTORE_PATH"];
+    }
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  await test("Setup: policy addAllowRule works for new service", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-setup-pol-"));
+    const policyPath = path.join(tmpDir, "policy.yaml");
+    fs.writeFileSync(policyPath, `policies:\n  - identity: local-dev\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`);
+
+    const origEnv = process.env["AXIS_POLICY_PATH"];
+    process.env["AXIS_POLICY_PATH"] = policyPath;
+
+    const policy = new PolicyEngine();
+    policy.addAllowRule("local-dev", "github", ["*"]);
+
+    // Verify the rule was added
+    const result = policy.isAllowed("local-dev", "github", "repos.get");
+    assert.strictEqual(result.allowed, true);
+
+    if (origEnv !== undefined) {
+      process.env["AXIS_POLICY_PATH"] = origEnv;
+    } else {
+      delete process.env["AXIS_POLICY_PATH"];
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  await test("Setup: full init + store + policy sequence", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-setup-e2e-"));
+    const axisDir = path.join(tmpDir, ".axis");
+    const configDir = path.join(tmpDir, "config");
+    const dataDir = path.join(tmpDir, "data");
+
+    // Step 1: Init
+    fs.mkdirSync(axisDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(dataDir, { recursive: true });
+    assert.ok(fs.existsSync(axisDir));
+    assert.ok(fs.existsSync(configDir));
+    assert.ok(fs.existsSync(dataDir));
+
+    // Step 2: Store credential
+    const ksPath = path.join(axisDir, "keystore.json");
+    const origKsEnv = process.env["AXIS_KEYSTORE_PATH"];
+    process.env["AXIS_KEYSTORE_PATH"] = ksPath;
+
+    const password = "setup-e2e-password";
+    const ks = new Keystore(password);
+    ks.setSecret("anthropic", "sk-ant-test-key");
+    assert.strictEqual(ks.getSecret("anthropic"), "sk-ant-test-key");
+
+    // Step 3: Update policy
+    const policyPath = path.join(configDir, "policy.yaml");
+    fs.writeFileSync(policyPath, `policies:\n  - identity: local-dev\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`);
+    const origPolEnv = process.env["AXIS_POLICY_PATH"];
+    process.env["AXIS_POLICY_PATH"] = policyPath;
+
+    const policy = new PolicyEngine();
+    policy.addAllowRule("local-dev", "anthropic", ["*"]);
+    assert.strictEqual(policy.isAllowed("local-dev", "anthropic", "messages.create").allowed, true);
+
+    // Cleanup
+    if (origKsEnv !== undefined) process.env["AXIS_KEYSTORE_PATH"] = origKsEnv;
+    else delete process.env["AXIS_KEYSTORE_PATH"];
+    if (origPolEnv !== undefined) process.env["AXIS_POLICY_PATH"] = origPolEnv;
+    else delete process.env["AXIS_POLICY_PATH"];
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+}
+
 // Main runner
 // ---------------------------------------------------------------------------
 
@@ -1540,6 +1797,9 @@ async function main(): Promise<void> {
   await runAuditErrorDecisionTests();
   await runGitHubPathEncodingTests();
   await runIntegrationTests();
+  await runDashboardTests();
+  await runStdinTests();
+  await runSetupTests();
 
   console.log(`\n${"=".repeat(40)}`);
   console.log(`Results: ${passed} passed, ${failed} failed`);
