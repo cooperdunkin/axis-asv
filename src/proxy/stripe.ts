@@ -16,6 +16,7 @@
  */
 
 import { SecretStore } from "../vault/keystore.js";
+import { fetchWithTimeout } from "./fetchWithTimeout.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -149,12 +150,15 @@ async function stripeFetch(
       ).toString();
     }
 
-    response = await fetch(url, {
+    response = await fetchWithTimeout(url, {
       method,
       headers,
       body: bodyContent,
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Request timed out after 30 seconds" };
+    }
     const msg = (err as Error).message.replace(apiKey, "[REDACTED]");
     return { ok: false, error: `Network error calling Stripe API: ${msg}` };
   }

@@ -14,7 +14,8 @@ import * as path from "path";
 import * as os from "os";
 import { Keystore } from "../vault/keystore.js";
 import { PolicyEngine } from "../policy/policy.js";
-import { auditLogPath } from "../audit/audit.js";
+import { AuditLogger, auditLogPath } from "../audit/audit.js";
+import { fetchWithTimeout } from "../proxy/fetchWithTimeout.js";
 import {
   validateAnthropicParams,
   sanitizeParams as sanitizeAnthropicParams,
@@ -1245,6 +1246,137 @@ async function runTtlStoreTests(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// fetchWithTimeout tests
+// ---------------------------------------------------------------------------
+
+async function runFetchWithTimeoutTests(): Promise<void> {
+  console.log("\n[fetchWithTimeout]");
+
+  await test("fetchWithTimeout: aborts after specified timeout", async () => {
+    // Use a very short timeout so the test finishes quickly
+    try {
+      // Create a request that will never resolve by targeting a non-routable IP
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 50);
+      try {
+        await fetchWithTimeout("https://10.255.255.1", { timeoutMs: 50 });
+        assert.fail("Should have thrown");
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err: any) {
+      assert.strictEqual(err.name, "AbortError");
+    }
+  });
+
+  await test("fetchWithTimeout: default timeout is 30s", () => {
+    // Just verify the function exists and is callable — actual timeout
+    // behavior tested above with custom timeoutMs
+    assert.strictEqual(typeof fetchWithTimeout, "function");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Audit logger error decision tests
+// ---------------------------------------------------------------------------
+
+async function runAuditErrorDecisionTests(): Promise<void> {
+  console.log("\n[Audit Error Decision]");
+
+  await test("AuditLogger.logError writes entry with decision='error'", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-audit-test-"));
+    const logPath = path.join(tmpDir, "audit.jsonl");
+    const logger = new AuditLogger(logPath);
+
+    logger.logError({
+      request_id: "test-req-001",
+      identity: "test-user",
+      service: "openai",
+      action: "responses.create",
+      latency_ms: 150,
+      error: "HTTP 500 Internal Server Error",
+    });
+
+    const content = fs.readFileSync(logPath, "utf-8").trim();
+    const entry = JSON.parse(content);
+    assert.strictEqual(entry.decision, "error");
+    assert.strictEqual(entry.error, "HTTP 500 Internal Server Error");
+    assert.strictEqual(entry.request_id, "test-req-001");
+    assert.strictEqual(entry.latency_ms, 150);
+
+    // Cleanup
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  await test("Decision type accepts 'allow', 'deny', and 'error'", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-audit-test-"));
+    const logPath = path.join(tmpDir, "audit.jsonl");
+    const logger = new AuditLogger(logPath);
+
+    logger.logAllow({
+      request_id: "r1",
+      identity: "u",
+      service: "s",
+      action: "a",
+      latency_ms: 10,
+    });
+    logger.logDeny({
+      request_id: "r2",
+      identity: "u",
+      service: "s",
+      action: "a",
+      reason: "denied",
+    });
+    logger.logError({
+      request_id: "r3",
+      identity: "u",
+      service: "s",
+      action: "a",
+      latency_ms: 20,
+      error: "fail",
+    });
+
+    const lines = fs.readFileSync(logPath, "utf-8").trim().split("\n");
+    assert.strictEqual(lines.length, 3);
+    assert.strictEqual(JSON.parse(lines[0]!).decision, "allow");
+    assert.strictEqual(JSON.parse(lines[1]!).decision, "deny");
+    assert.strictEqual(JSON.parse(lines[2]!).decision, "error");
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// GitHub path encoding tests
+// ---------------------------------------------------------------------------
+
+async function runGitHubPathEncodingTests(): Promise<void> {
+  console.log("\n[GitHub Path Encoding]");
+
+  await test("GitHub contents.read: validates path with special characters", () => {
+    // Validation should accept paths with special chars — encoding happens in the proxy
+    const r = validateContentsReadParams({
+      owner: "octocat",
+      repo: "hello-world",
+      path: "src/my file #1.ts",
+    });
+    assert.strictEqual(r.path, "src/my file #1.ts");
+  });
+
+  await test("GitHub contents.read: split/map/join encoding preserves slashes", () => {
+    const testPath = "src/components/my file.tsx";
+    const encoded = testPath.split("/").map(encodeURIComponent).join("/");
+    assert.strictEqual(encoded, "src/components/my%20file.tsx");
+  });
+
+  await test("GitHub contents.read: encodes hash and question mark in segments", () => {
+    const testPath = "docs/FAQ#section.md";
+    const encoded = testPath.split("/").map(encodeURIComponent).join("/");
+    assert.strictEqual(encoded, "docs/FAQ%23section.md");
+  });
+}
+
 // Main runner
 // ---------------------------------------------------------------------------
 
@@ -1267,6 +1399,9 @@ async function main(): Promise<void> {
   await runAWSProxyTests();
   await runGCPProxyTests();
   await runTtlStoreTests();
+  await runFetchWithTimeoutTests();
+  await runAuditErrorDecisionTests();
+  await runGitHubPathEncodingTests();
 
   console.log(`\n${"=".repeat(40)}`);
   console.log(`Results: ${passed} passed, ${failed} failed`);

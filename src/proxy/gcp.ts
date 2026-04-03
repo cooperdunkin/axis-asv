@@ -19,6 +19,7 @@
  */
 
 import { SecretStore } from "../vault/keystore.js";
+import { fetchWithTimeout } from "./fetchWithTimeout.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,14 +129,17 @@ async function gcsFetch(
 ): Promise<ProxyResponse> {
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetchWithTimeout(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "User-Agent": "axis/0.1.0",
       },
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Request timed out after 30 seconds" };
+    }
     const msg = (err as Error).message.replace(accessToken, "[REDACTED]");
     return { ok: false, error: `Network error calling GCS API: ${msg}` };
   }

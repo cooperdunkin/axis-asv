@@ -16,6 +16,7 @@
  */
 
 import { SecretStore } from "../vault/keystore.js";
+import { fetchWithTimeout } from "./fetchWithTimeout.js";
 import { proxyAnthropicMessages } from "./anthropic.js";
 import { proxyGitHubAction } from "./github.js";
 import { proxyStripeAction } from "./stripe.js";
@@ -127,7 +128,7 @@ export async function proxyOpenAIResponses(
   // 4. Call OpenAI
   let response: Response;
   try {
-    response = await fetch("https://api.openai.com/v1/responses", {
+    response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -136,7 +137,10 @@ export async function proxyOpenAIResponses(
       },
       body: JSON.stringify(body),
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Request timed out after 30 seconds" };
+    }
     // Network error — scrub any potential secret from the message
     const msg = (err as Error).message.replace(apiKey, "[REDACTED]");
     return { ok: false, error: `Network error calling OpenAI API: ${msg}` };

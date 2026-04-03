@@ -20,6 +20,7 @@
  */
 
 import { SecretStore } from "../vault/keystore.js";
+import { fetchWithTimeout } from "./fetchWithTimeout.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,7 +117,7 @@ async function twilioFetch(
   const credential = `${accountSid}:${authToken}`;
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetchWithTimeout(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -125,7 +126,10 @@ async function twilioFetch(
       },
       body: new URLSearchParams(body).toString(),
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Request timed out after 30 seconds" };
+    }
     const msg = (err as Error).message
       .replace(accountSid, "[REDACTED]")
       .replace(authToken, "[REDACTED]");

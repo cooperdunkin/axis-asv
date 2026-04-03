@@ -16,6 +16,7 @@
  */
 
 import { SecretStore } from "../vault/keystore.js";
+import { fetchWithTimeout } from "./fetchWithTimeout.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -135,7 +136,7 @@ export async function proxyAnthropicMessages(
   // 4. Call Anthropic Messages API
   let response: Response;
   try {
-    response = await fetch("https://api.anthropic.com/v1/messages", {
+    response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -144,7 +145,10 @@ export async function proxyAnthropicMessages(
       },
       body: JSON.stringify(body),
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Request timed out after 30 seconds" };
+    }
     const msg = (err as Error).message.replace(apiKey, "[REDACTED]");
     return { ok: false, error: `Network error calling Anthropic API: ${msg}` };
   } finally {

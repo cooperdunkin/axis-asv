@@ -16,6 +16,7 @@
  */
 
 import { SecretStore } from "../vault/keystore.js";
+import { fetchWithTimeout } from "./fetchWithTimeout.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -158,7 +159,7 @@ async function githubFetch(
 ): Promise<ProxyResponse> {
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetchWithTimeout(url, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -169,7 +170,10 @@ async function githubFetch(
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Request timed out after 30 seconds" };
+    }
     // Scrub any accidental token leak from network error message
     const msg = (err as Error).message.replace(token, "[REDACTED]");
     return { ok: false, error: `Network error calling GitHub API: ${msg}` };
@@ -283,8 +287,9 @@ async function proxyContentsRead(params: unknown, keystore: SecretStore): Promis
   }
 
   const { owner, repo, path } = validated;
-  // path may contain slashes (file path) — do not encode the whole thing
-  const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`;
+  // Encode each path segment individually to preserve slashes but handle special chars
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}`;
   const result = await githubFetch(url, "GET", token);
   token = "";
   return result;

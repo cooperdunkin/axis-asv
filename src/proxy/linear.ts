@@ -18,6 +18,7 @@
  */
 
 import { SecretStore } from "../vault/keystore.js";
+import { fetchWithTimeout } from "./fetchWithTimeout.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,7 +122,7 @@ async function linearFetch(
 ): Promise<ProxyResponse> {
   let response: Response;
   try {
-    response = await fetch(LINEAR_API_URL, {
+    response = await fetchWithTimeout(LINEAR_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -131,7 +132,10 @@ async function linearFetch(
       },
       body: JSON.stringify({ query, variables }),
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Request timed out after 30 seconds" };
+    }
     const msg = (err as Error).message.replace(apiKey, "[REDACTED]");
     return { ok: false, error: `Network error calling Linear API: ${msg}` };
   }

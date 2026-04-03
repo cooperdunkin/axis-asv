@@ -16,6 +16,7 @@
  */
 
 import { SecretStore } from "../vault/keystore.js";
+import { fetchWithTimeout } from "./fetchWithTimeout.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -118,7 +119,7 @@ async function slackFetch(
 ): Promise<ProxyResponse> {
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetchWithTimeout(url, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -127,7 +128,10 @@ async function slackFetch(
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, error: "Request timed out after 30 seconds" };
+    }
     const msg = (err as Error).message.replace(token, "[REDACTED]");
     return { ok: false, error: `Network error calling Slack API: ${msg}` };
   }

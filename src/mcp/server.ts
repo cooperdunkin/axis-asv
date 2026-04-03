@@ -341,6 +341,34 @@ async function main(): Promise<void> {
     }
 
     // ---------------------------------------------------------------------------
+    // Payload size check (1MB limit)
+    // ---------------------------------------------------------------------------
+    const MAX_PAYLOAD_BYTES = 1_048_576;
+    const serialized = JSON.stringify(params);
+    if (serialized.length > MAX_PAYLOAD_BYTES) {
+      audit.logDeny({
+        request_id: requestId,
+        identity,
+        service,
+        action,
+        justification,
+        reason: `Payload size ${serialized.length} bytes exceeds limit of ${MAX_PAYLOAD_BYTES} bytes`,
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              error: `Request payload too large (${serialized.length} bytes). Maximum is ${MAX_PAYLOAD_BYTES} bytes (1MB).`,
+              request_id: requestId,
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // ---------------------------------------------------------------------------
     // Proxy call
     // ---------------------------------------------------------------------------
     let proxyResult;
@@ -348,7 +376,7 @@ async function main(): Promise<void> {
       proxyResult = await proxyRequest(service, action, params, keystore);
     } catch (err) {
       const error = `Unexpected proxy error: ${(err as Error).message}`;
-      audit.logAllow({
+      audit.logError({
         request_id: requestId,
         identity,
         service,
@@ -371,7 +399,7 @@ async function main(): Promise<void> {
     const latency = Date.now() - startMs;
 
     if (!proxyResult.ok) {
-      audit.logAllow({
+      audit.logError({
         request_id: requestId,
         identity,
         service,

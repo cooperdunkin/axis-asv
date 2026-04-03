@@ -19,7 +19,7 @@ import { v4 as uuidv4 } from "uuid";
 // Types
 // ---------------------------------------------------------------------------
 
-export type Decision = "allow" | "deny";
+export type Decision = "allow" | "deny" | "error";
 
 export interface AuditEntry {
   timestamp: string;
@@ -121,6 +121,31 @@ export class AuditLogger {
       service: opts.service,
       action: opts.action,
       decision: "allow",
+      justification: opts.justification,
+      latency_ms: opts.latency_ms,
+      error: opts.error,
+    });
+  }
+
+  /**
+   * Convenience: log a proxy error (policy allowed, but the API call failed).
+   */
+  logError(opts: {
+    request_id: string;
+    identity: string;
+    service: string;
+    action: string;
+    justification?: string;
+    latency_ms: number;
+    error: string;
+  }): void {
+    this.log({
+      timestamp: new Date().toISOString(),
+      request_id: opts.request_id,
+      identity: opts.identity,
+      service: opts.service,
+      action: opts.action,
+      decision: "error",
       justification: opts.justification,
       latency_ms: opts.latency_ms,
       error: opts.error,
