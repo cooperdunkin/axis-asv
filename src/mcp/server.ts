@@ -416,8 +416,13 @@ async function main(): Promise<void> {
   );
 }
 
-// Only start the server when run directly (not when imported for testing)
-const isMain = require.main === module || process.argv[1]?.endsWith("server.js");
+// Only start the server when run directly (not when imported for testing).
+// Check both require.main (CommonJS) and process.argv[1] (covers tsx/esm loaders).
+const entryScript = process.argv[1] ?? "";
+const isMain =
+  require.main === module ||
+  entryScript.endsWith("/mcp/server.js") ||
+  entryScript.endsWith("/mcp/server.ts");
 if (isMain) {
   main().catch((err) => {
     process.stderr.write(`[Axis] Fatal error: ${(err as Error).message}\n`);
