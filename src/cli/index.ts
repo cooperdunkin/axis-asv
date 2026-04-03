@@ -25,8 +25,6 @@ import { Keystore, axisHome, keystorePath } from "../vault/keystore.js";
 import { PolicyEngine, defaultPolicyPath } from "../policy/policy.js";
 import { AuditLogger, auditLogPath, AuditEntry } from "../audit/audit.js";
 import { keychainSet, keychainDelete, keychainExists, keychainGet } from "../keychain/keychain.js";
-import { CloudClient } from "../cloud/client.js";
-import { encryptSecret } from "../vault/keystore.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -95,11 +93,14 @@ async function prompt(question: string, hidden = false): Promise<string> {
   });
 }
 
-async function promptMasterPassword(confirmLabel = ""): Promise<string> {
+async function promptMasterPassword(confirmLabel = "", enforceMinLength = false): Promise<string> {
   const label = confirmLabel || "Master password";
   const pw = await prompt(`${label}: `, true);
   if (!pw || pw.trim().length === 0) {
     die("Master password must not be empty.");
+  }
+  if (enforceMinLength && pw.length < 8) {
+    die("Master password must be at least 8 characters.");
   }
   return pw;
 }
@@ -177,7 +178,10 @@ async function cmdAdd(service: string): Promise<void> {
 
   print(`Adding secret for service: ${service}`);
 
-  const masterPw = await promptMasterPassword();
+  // Enforce minimum password length when creating a new keystore (first secret)
+  const ksExists = fs.existsSync(keystorePath());
+  const isFirstSecret = !ksExists || new Keystore("").listServices().length === 0;
+  const masterPw = await promptMasterPassword("", isFirstSecret);
 
   let secretValue: string;
   if (service === "openai") {
@@ -190,60 +194,28 @@ async function cmdAdd(service: string): Promise<void> {
     die("Secret must not be empty.");
   }
 
-  const session = CloudClient.getSession();
-  if (session) {
-    // Cloud mode: encrypt locally, send ciphertext to cloud
-    const { salt, iv, ciphertext, tag } = encryptSecret(secretValue, masterPw);
+  const ks = new Keystore(masterPw);
+  const existing = ks.listServices();
+  if (existing.length > 0 && !ks.verifyPassword()) {
     secretValue = "";
-    try {
-      await CloudClient.addCredential(service, ciphertext, salt, iv, tag);
-    } catch (err) {
-      die((err as Error).message);
-    }
-    print(`  ✓ Secret for "${service}" encrypted and stored in Axis Cloud.`);
-    print(`    Logged in as: ${session.email}`);
-  } else {
-    // Local mode: verify password against existing entries, then store locally
-    const ks = new Keystore(masterPw);
-    const existing = ks.listServices();
-    if (existing.length > 0 && !ks.verifyPassword()) {
-      secretValue = "";
-      die("Wrong master password.");
-    }
-    ks.setSecret(service, secretValue);
-    secretValue = "";
-    print(`  ✓ Secret for "${service}" stored and encrypted.`);
-    print(`    Keystore: ${keystorePath()}`);
+    die("Wrong master password.");
   }
+
+  // Free tier: 3 credentials max
+  if (existing.length >= 3) {
+    print("You've reached the free tier limit of 3 credentials.");
+    print("Upgrade to Pro for unlimited credentials: https://axisproxy.com/pro");
+    process.exit(0);
+  }
+
+  ks.setSecret(service, secretValue);
+  secretValue = "";
+  print(`  ✓ Secret for "${service}" stored and encrypted.`);
+  print(`    Keystore: ${keystorePath()}`);
 }
 
 /** axis list */
 async function cmdList(): Promise<void> {
-  const session = CloudClient.getSession();
-
-  if (session) {
-    let services: Array<{ id: string; service: string; created_at: string; updated_at: string }>;
-    try {
-      services = await CloudClient.listCredentials();
-    } catch (err) {
-      die((err as Error).message);
-    }
-
-    if (services.length === 0) {
-      print("No secrets stored. Run: axis add <service>");
-      return;
-    }
-
-    print(`Stored services (${services.length}) — Axis Cloud [${session.email}]:`);
-    print("");
-    for (const svc of services) {
-      print(`  ${svc.service.padEnd(20)}  created: ${svc.created_at}  updated: ${svc.updated_at}`);
-    }
-    print("");
-    return;
-  }
-
-  // Local mode
   if (!fs.existsSync(keystorePath())) {
     print("No secrets stored. Run: axis add <service>");
     return;
@@ -275,31 +247,6 @@ async function cmdList(): Promise<void> {
 async function cmdRevoke(service: string): Promise<void> {
   if (!service) die("Usage: axis revoke <service>  (e.g. axis revoke openai)");
 
-  const session = CloudClient.getSession();
-
-  if (session) {
-    // Cloud mode: find the credential id by service name, then delete
-    let creds: Array<{ id: string; service: string; created_at: string; updated_at: string }>;
-    try {
-      creds = await CloudClient.listCredentials();
-    } catch (err) {
-      die((err as Error).message);
-    }
-    const cred = creds.find((c) => c.service === service);
-    if (!cred) {
-      print(`  · No secret found for "${service}" — nothing to revoke.`);
-      return;
-    }
-    try {
-      await CloudClient.deleteCredential(cred.id);
-    } catch (err) {
-      die((err as Error).message);
-    }
-    print(`  ✓ Secret for "${service}" revoked from Axis Cloud.`);
-    return;
-  }
-
-  // Local mode
   const masterPw = await promptMasterPassword();
   const ks = new Keystore(masterPw);
 
@@ -470,7 +417,21 @@ function formatLogEntry(entry: AuditEntry): string {
   return `[${ts}] ${decision}  ${entry.identity} → ${entry.service}/${entry.action}  ${latency}  req:${reqId}${errorSuffix}`;
 }
 
-/** axis logs [--tail] [--last <n>] */
+/** Parse a named flag value from args (e.g. --service openai → "openai") */
+function parseFlag(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx === -1 || idx + 1 >= args.length) return undefined;
+  return args[idx + 1];
+}
+
+/** Check if an audit entry matches the active filters. */
+function matchesFilters(entry: AuditEntry, serviceFilter?: string, decisionFilter?: string): boolean {
+  if (serviceFilter && entry.service !== serviceFilter) return false;
+  if (decisionFilter && entry.decision !== decisionFilter) return false;
+  return true;
+}
+
+/** axis logs [--tail] [--last <n>] [--service <name>] [--decision <allow|deny|error>] */
 async function cmdLogs(args: string[]): Promise<void> {
   const logPath = auditLogPath();
   const tail = args.includes("--tail");
@@ -483,6 +444,9 @@ async function cmdLogs(args: string[]): Promise<void> {
     lastN = n;
   }
 
+  const serviceFilter = parseFlag(args, "--service");
+  const decisionFilter = parseFlag(args, "--decision");
+
   if (!fs.existsSync(logPath)) {
     print(`No audit log found at ${logPath}. Run axis mcp to start logging.`);
     return;
@@ -490,15 +454,22 @@ async function cmdLogs(args: string[]): Promise<void> {
 
   const content = fs.readFileSync(logPath, "utf8");
   const lines = content.split("\n").filter((l) => l.trim().length > 0);
-  const slice = lines.slice(-lastN);
 
-  for (const line of slice) {
+  // Parse all, filter, then take last N
+  const entries: AuditEntry[] = [];
+  for (const line of lines) {
     try {
       const entry = JSON.parse(line) as AuditEntry;
-      print(formatLogEntry(entry));
+      if (matchesFilters(entry, serviceFilter, decisionFilter)) {
+        entries.push(entry);
+      }
     } catch {
       // Skip malformed lines
     }
+  }
+
+  for (const entry of entries.slice(-lastN)) {
+    print(formatLogEntry(entry));
   }
 
   if (tail) {
@@ -519,7 +490,9 @@ async function cmdLogs(args: string[]): Promise<void> {
         for (const newLine of newLines) {
           try {
             const entry = JSON.parse(newLine) as AuditEntry;
-            print(formatLogEntry(entry));
+            if (matchesFilters(entry, serviceFilter, decisionFilter)) {
+              print(formatLogEntry(entry));
+            }
           } catch {
             // Skip malformed lines
           }
@@ -539,7 +512,7 @@ async function cmdLogs(args: string[]): Promise<void> {
 async function cmdKeychain(subcommand: string): Promise<void> {
   switch (subcommand) {
     case "set": {
-      const pw = await promptMasterPassword("Master password to store in keychain");
+      const pw = await promptMasterPassword("Master password to store in keychain", true);
       const confirm = await promptMasterPassword("Confirm");
       if (pw !== confirm) {
         die("Passwords do not match.");
@@ -593,7 +566,7 @@ async function cmdKeychain(subcommand: string): Promise<void> {
 // Rotate command
 // ---------------------------------------------------------------------------
 
-/** axis rotate <service> */
+/** axis rotate <service> or axis rotate --all */
 async function cmdRotate(service: string): Promise<void> {
   if (!service) die("Usage: axis rotate <service>  (e.g. axis rotate openai)");
 
@@ -606,7 +579,30 @@ async function cmdRotate(service: string): Promise<void> {
     die("Wrong master password.");
   }
 
-  // 3. Retrieve the secret under the current password
+  if (service === "--all") {
+    const services = ks.listServices();
+    if (services.length === 0) {
+      print("No secrets stored — nothing to rotate.");
+      return;
+    }
+
+    // Prompt for new master password once
+    const newPw = await promptMasterPassword("New master password", true);
+    const confirmPw = await promptMasterPassword("Confirm new master password");
+    if (newPw !== confirmPw) die("Passwords do not match.");
+
+    const newKs = new Keystore(newPw);
+    for (const svc of services) {
+      let secret = ks.getSecret(svc.service);
+      newKs.setSecret(svc.service, secret);
+      secret = "";
+      print(`  ✓ ${svc.service} re-encrypted`);
+    }
+    print(`\n  All ${services.length} secret(s) re-encrypted with new master password.`);
+    return;
+  }
+
+  // Single service rotation
   let secret: string;
   try {
     secret = ks.getSecret(service);
@@ -614,88 +610,56 @@ async function cmdRotate(service: string): Promise<void> {
     die((err as Error).message);
   }
 
-  // 4. Prompt for new master password
   const newPw = await promptMasterPassword("New master password");
-
-  // 5. Confirm new master password
   const confirmPw = await promptMasterPassword("Confirm new master password");
   if (newPw !== confirmPw) {
     secret = "";
     die("Passwords do not match.");
   }
 
-  // 6. Re-encrypt under new password
   const newKs = new Keystore(newPw);
   newKs.setSecret(service, secret);
-
-  // 7. Overwrite secret immediately
   secret = "";
 
   print(`  ✓ Secret for "${service}" re-encrypted with new master password.`);
   print(`    Note: other services remain encrypted with the old password.`);
-  print(`    Run axis rotate <service> for each additional service.`);
+  print(`    Run axis rotate --all to rotate all services at once.`);
 }
 
 // ---------------------------------------------------------------------------
-// Cloud account commands
+// Allow / Deny commands
 // ---------------------------------------------------------------------------
 
-/** axis signup */
-async function cmdSignup(): Promise<void> {
-  const email = await prompt("Email: ");
-  if (!email || !email.includes("@")) die("Invalid email address.");
+/** axis allow <service> [action] */
+async function cmdAllow(args: string[]): Promise<void> {
+  const service = args[0];
+  if (!service) die("Usage: axis allow <service> [action]  (e.g. axis allow github issues.create)");
 
-  const password = await promptMasterPassword("Password");
-  const confirm = await promptMasterPassword("Confirm password");
-  if (password !== confirm) die("Passwords do not match.");
+  const action = args[1]; // optional
+  const identity = process.env["AXIS_IDENTITY"] ?? "local-dev";
+  const actions = action ? [action] : ["*"];
 
-  try {
-    await CloudClient.signup(email, password);
-    print(`  ✓ Account created and session saved.`);
-    print(`    Logged in as: ${email}`);
-    print(`    Run 'axis add openai' to store your first credential.`);
-  } catch (err) {
-    die((err as Error).message);
-  }
+  const policy = new PolicyEngine();
+  policy.addAllowRule(identity, service, actions);
+
+  const actionLabel = action ?? "*";
+  print(`  ✓ Policy updated: ${identity} can now access ${service}/${actionLabel}`);
 }
 
-/** axis login */
-async function cmdLogin(): Promise<void> {
-  const email = await prompt("Email: ");
-  if (!email || !email.includes("@")) die("Invalid email address.");
+/** axis deny <service> */
+async function cmdDeny(args: string[]): Promise<void> {
+  const service = args[0];
+  if (!service) die("Usage: axis deny <service>  (e.g. axis deny github)");
 
-  const password = await promptMasterPassword("Password");
+  const identity = process.env["AXIS_IDENTITY"] ?? "local-dev";
+  const policy = new PolicyEngine();
+  const removed = policy.removeAllowRule(identity, service);
 
-  try {
-    await CloudClient.login(email, password);
-    print(`  ✓ Logged in as: ${email}`);
-    print(`    Run 'axis list' to see your stored credentials.`);
-  } catch (err) {
-    die((err as Error).message);
+  if (removed) {
+    print(`  ✓ Policy updated: removed ${service} access for ${identity}`);
+  } else {
+    print(`  · No ${service} rule found for ${identity} — nothing to remove.`);
   }
-}
-
-/** axis logout */
-async function cmdLogout(): Promise<void> {
-  const session = CloudClient.getSession();
-  if (!session) {
-    print("  · Not logged in.");
-    return;
-  }
-  await CloudClient.logout();
-  print(`  ✓ Logged out.`);
-}
-
-/** axis whoami */
-async function cmdWhoami(): Promise<void> {
-  const session = CloudClient.getSession();
-  if (!session) {
-    print("Not logged in. Run: axis login");
-    return;
-  }
-  print(`Logged in as: ${session.email}`);
-  print(`Plan: Free`);
-  print(`  To upgrade: https://axisproxy.com/#pricing`);
 }
 
 // ---------------------------------------------------------------------------
@@ -704,7 +668,7 @@ async function cmdWhoami(): Promise<void> {
 
 function printHelp(): void {
   print(`
-Axis v0.2.0
+Axis v0.4.0
 
 Usage:
   axis <command> [args]
@@ -717,20 +681,18 @@ Commands:
   doctor            Run health checks on config, crypto, and keystore
   mcp               Start the MCP server (reads master password from keychain or AXIS_MASTER_PASSWORD)
   logs              Show audit log entries (newest last, default 50)
-                      --last <n>   Show last N entries
-                      --tail       Watch for new entries in real time (Ctrl-C to stop)
+                      --last <n>          Show last N entries
+                      --tail              Watch for new entries in real time
+                      --service <name>    Filter by service
+                      --decision <type>   Filter by decision (allow|deny|error)
   rotate <service>  Re-encrypt a service secret under a new master password
-                      Note: run once per service — each is rotated individually
+  rotate --all      Re-encrypt all secrets under a new master password
+  allow <svc> [act] Add a policy rule allowing a service (or specific action)
+                      Uses AXIS_IDENTITY (default: local-dev)
+  deny <service>    Remove all allow rules for a service
   keychain set      Store master password in OS keychain (eliminates plaintext in config)
   keychain delete   Remove master password from OS keychain
   keychain status   Check whether master password is in keychain
-
-Cloud account:
-  signup            Create an Axis Cloud account
-  login             Sign in to Axis Cloud
-  logout            Sign out and clear local session
-  whoami            Show current logged-in account and plan
-
   help              Show this help message
 
 Environment variables (for MCP server):
@@ -739,8 +701,6 @@ Environment variables (for MCP server):
   AXIS_POLICY_PATH        Override path to policy.yaml
 
 Examples:
-  axis signup
-  axis login
   axis add openai
   axis list
   axis mcp                              # uses OS keychain for master password
@@ -815,17 +775,11 @@ async function main(): Promise<void> {
     case "keychain":
       await cmdKeychain(rest[0] ?? "");
       break;
-    case "signup":
-      await cmdSignup();
+    case "allow":
+      await cmdAllow(rest);
       break;
-    case "login":
-      await cmdLogin();
-      break;
-    case "logout":
-      await cmdLogout();
-      break;
-    case "whoami":
-      await cmdWhoami();
+    case "deny":
+      await cmdDeny(rest);
       break;
     case "help":
     case "--help":

@@ -29,6 +29,7 @@ import {
 } from "../proxy/github.js";
 import { RateLimiter } from "../policy/ratelimit.js";
 import { TtlStore } from "../policy/ttlstore.js";
+import { handleExecuteAction } from "../mcp/server.js";
 import {
   validatePaymentIntentsCreateParams,
   validateCustomersListParams,
@@ -1377,6 +1378,142 @@ async function runGitHubPathEncodingTests(): Promise<void> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// E2E Integration tests (handleExecuteAction)
+// ---------------------------------------------------------------------------
+
+async function runIntegrationTests(): Promise<void> {
+  console.log("\n[Integration: handleExecuteAction]");
+
+  // Helper: create isolated test environment
+  function setupTestEnv(policyYaml: string) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-e2e-"));
+    const policyPath = path.join(tmpDir, "policy.yaml");
+    fs.writeFileSync(policyPath, policyYaml);
+
+    const origHome = process.env["HOME"];
+    process.env["HOME"] = tmpDir;
+
+    const ks = new Keystore("test-master-pw-12345");
+    const policy = new PolicyEngine(policyPath);
+    const audit = new AuditLogger(path.join(tmpDir, "audit.jsonl"));
+    const rateLimiter = new RateLimiter();
+    const ttlStore = new TtlStore();
+
+    return {
+      deps: { identity: "test-id", policy, audit, keystore: ks, rateLimiter, ttlStore },
+      tmpDir,
+      ks,
+      auditPath: path.join(tmpDir, "audit.jsonl"),
+      cleanup: () => {
+        process.env["HOME"] = origHome;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  function parseResponse(res: { content: Array<{ text: string }> }) {
+    return JSON.parse(res.content[0].text);
+  }
+
+  function readAuditEntries(auditPath: string) {
+    if (!fs.existsSync(auditPath)) return [];
+    return fs.readFileSync(auditPath, "utf-8").split("\n").filter(l => l.trim()).map(l => JSON.parse(l));
+  }
+
+  // 1. Denied request — policy denies
+  await test("E2E: denied request returns denied=true and logs deny", async () => {
+    const env = setupTestEnv(`policies:\n  - identity: test-id\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`);
+    try {
+      const res = await handleExecuteAction({
+        service: "stripe", action: "customers.list",
+        justification: "test", params: {},
+      }, env.deps);
+      const body = parseResponse(res);
+      assert.strictEqual(body.denied, true);
+      assert.ok(body.reason.includes("Policy denied"));
+      const entries = readAuditEntries(env.auditPath);
+      assert.ok(entries.some((e: any) => e.decision === "deny" && e.service === "stripe"));
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // 2. Missing credential — policy allows but no stored credential
+  await test("E2E: missing credential returns error", async () => {
+    const env = setupTestEnv(`policies:\n  - identity: test-id\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`);
+    try {
+      // Policy allows openai, but no credential stored in keystore
+      const res = await handleExecuteAction({
+        service: "openai", action: "responses.create",
+        justification: "test", params: { model: "gpt-4o", input: "hello" },
+      }, env.deps);
+      const body = parseResponse(res);
+      // Should fail at the proxy level (no secret stored)
+      assert.strictEqual(body.ok, false);
+      assert.ok(body.error, "should have error message");
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // 3. Rate-limited request
+  await test("E2E: rate-limited request is denied", async () => {
+    const env = setupTestEnv(`policies:\n  - identity: test-id\n    rateLimit:\n      requestsPerMinute: 1\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`);
+    try {
+      // First call consumes the limit (will error at proxy, but rate limiter allows it)
+      await handleExecuteAction({
+        service: "openai", action: "responses.create",
+        justification: "first", params: { model: "gpt-4o", input: "hi" },
+      }, env.deps);
+
+      // Second call should be rate-limited
+      const res = await handleExecuteAction({
+        service: "openai", action: "responses.create",
+        justification: "second", params: { model: "gpt-4o", input: "hi" },
+      }, env.deps);
+      const body = parseResponse(res);
+      assert.strictEqual(body.denied, true);
+      assert.ok(body.reason.includes("Rate limit"));
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // 4. Oversized payload
+  await test("E2E: oversized payload is rejected", async () => {
+    const env = setupTestEnv(`policies:\n  - identity: test-id\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`);
+    try {
+      const bigPayload = { data: "x".repeat(1_100_000) };
+      const res = await handleExecuteAction({
+        service: "openai", action: "responses.create",
+        justification: "test", params: bigPayload,
+      }, env.deps);
+      const body = parseResponse(res);
+      assert.ok(body.error && body.error.includes("too large"));
+      assert.ok(res.isError);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  // 5. Missing required fields
+  await test("E2E: missing required fields returns error", async () => {
+    const env = setupTestEnv(`policies:\n  - identity: test-id\n    allow:\n      - service: openai\n        actions:\n          - responses.create\n`);
+    try {
+      const res = await handleExecuteAction({
+        service: "openai",
+        // missing action, justification, params
+      }, env.deps);
+      const body = parseResponse(res);
+      assert.ok(body.error && body.error.includes("Missing required fields"));
+      assert.ok(res.isError);
+    } finally {
+      env.cleanup();
+    }
+  });
+}
+
 // Main runner
 // ---------------------------------------------------------------------------
 
@@ -1402,6 +1539,7 @@ async function main(): Promise<void> {
   await runFetchWithTimeoutTests();
   await runAuditErrorDecisionTests();
   await runGitHubPathEncodingTests();
+  await runIntegrationTests();
 
   console.log(`\n${"=".repeat(40)}`);
   console.log(`Results: ${passed} passed, ${failed} failed`);

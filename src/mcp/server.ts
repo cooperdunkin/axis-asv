@@ -34,34 +34,6 @@ import { proxyRequest } from "../proxy/openai.js";
 import { keychainGet } from "../keychain/keychain.js";
 import { RateLimiter } from "../policy/ratelimit.js";
 import { TtlStore } from "../policy/ttlstore.js";
-import { CloudClient, CloudKeystore } from "../cloud/client.js";
-import type { AuditEntry } from "../audit/audit.js";
-
-// ---------------------------------------------------------------------------
-// Cloud audit log sync (fire-and-forget)
-// ---------------------------------------------------------------------------
-
-/**
- * Post an audit entry to the cloud API if a session exists.
- * Never throws — cloud audit failure must not interrupt the request flow.
- */
-function postCloudAuditLog(entry: AuditEntry): void {
-  const session = CloudClient.getSession();
-  if (!session) return;
-
-  const url = "https://axis-webhook.vercel.app/api/audit-logs";
-  fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${session.accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(entry),
-  }).catch(() => {
-    // Silently ignore — local log is the source of truth
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Master password resolution
 // ---------------------------------------------------------------------------
@@ -135,6 +107,174 @@ const EXECUTE_ACTION_TOOL = {
   },
 };
 
+const LIST_SERVICES_TOOL = {
+  name: "list_services",
+  description:
+    "List services the current identity is allowed to access and whether credentials are stored.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {},
+  },
+};
+
+const LIST_ACTIONS_TOOL = {
+  name: "list_actions",
+  description:
+    "List available actions for a service and whether the current identity is allowed to use each one.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      service: {
+        type: "string",
+        description: 'The service to query (e.g. "openai")',
+      },
+    },
+    required: ["service"],
+  },
+};
+
+/** Hardcoded action map per service (mirrors proxy dispatch table). */
+const SERVICE_ACTIONS: Record<string, string[]> = {
+  openai: ["responses.create"],
+  anthropic: ["messages.create"],
+  github: ["repos.get", "issues.create", "pulls.create", "contents.read"],
+  stripe: ["paymentIntents.create", "customers.list"],
+  slack: ["chat.postMessage", "conversations.list"],
+  sendgrid: ["mail.send"],
+  notion: ["pages.create", "databases.query"],
+  linear: ["issues.create"],
+  twilio: ["messages.create"],
+  aws: ["s3.getObject", "s3.putObject"],
+  gcp: ["storage.getObject", "storage.listObjects"],
+};
+
+// ---------------------------------------------------------------------------
+// Exported handler for testing
+// ---------------------------------------------------------------------------
+
+export interface HandlerDeps {
+  identity: string;
+  policy: PolicyEngine;
+  audit: AuditLogger;
+  keystore: SecretStore;
+  rateLimiter: RateLimiter;
+  ttlStore: TtlStore;
+}
+
+export interface McpToolResponse {
+  [key: string]: unknown;
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+export async function handleExecuteAction(
+  args: Record<string, unknown>,
+  deps: HandlerDeps,
+): Promise<McpToolResponse> {
+  const { identity, policy, audit, keystore, rateLimiter, ttlStore } = deps;
+  const service = args["service"] as string | undefined;
+  const action = args["action"] as string | undefined;
+  const justification = args["justification"] as string | undefined;
+  const params = args["params"] as Record<string, unknown> | undefined;
+
+  if (!service || !action || !justification || params === undefined) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({ error: "Missing required fields: service, action, justification, params" }),
+      }],
+      isError: true,
+    };
+  }
+
+  const requestId = audit.newRequestId();
+  const startMs = Date.now();
+
+  // Policy check
+  const { allowed, ttl } = policy.isAllowed(identity, service, action);
+  if (!allowed) {
+    const reason = `Policy denied: identity="${identity}" service="${service}" action="${action}"`;
+    audit.logDeny({ request_id: requestId, identity, service, action, justification, reason });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ denied: true, reason, request_id: requestId }) }],
+    };
+  }
+
+  // TTL check
+  if (ttl !== undefined) {
+    const ttlState = ttlStore.check(identity, service, action);
+    if (ttlState.active) {
+      const remainingSecs = Math.ceil(ttlState.remainingMs / 1000);
+      const reason = `TTL active: try again in ${remainingSecs}s (grant TTL=${ttl}s)`;
+      audit.logDeny({ request_id: requestId, identity, service, action, justification, reason });
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ denied: true, reason, request_id: requestId }) }],
+      };
+    }
+  }
+
+  // Rate limit check
+  const rateLimit = policy.getRateLimit(identity);
+  if (rateLimit !== null && !rateLimiter.check(identity, rateLimit)) {
+    const reason = `Rate limit exceeded for identity "${identity}"`;
+    audit.logDeny({ request_id: requestId, identity, service, action, justification, reason });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ denied: true, reason, request_id: requestId }) }],
+    };
+  }
+
+  // Payload size check (1MB limit)
+  const MAX_PAYLOAD_BYTES = 1_048_576;
+  const serialized = JSON.stringify(params);
+  if (serialized.length > MAX_PAYLOAD_BYTES) {
+    audit.logDeny({
+      request_id: requestId, identity, service, action, justification,
+      reason: `Payload size ${serialized.length} bytes exceeds limit of ${MAX_PAYLOAD_BYTES} bytes`,
+    });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({
+        error: `Request payload too large (${serialized.length} bytes). Maximum is ${MAX_PAYLOAD_BYTES} bytes (1MB).`,
+        request_id: requestId,
+      }) }],
+      isError: true,
+    };
+  }
+
+  // Proxy call
+  let proxyResult;
+  try {
+    proxyResult = await proxyRequest(service, action, params, keystore);
+  } catch (err) {
+    const error = `Unexpected proxy error: ${(err as Error).message}`;
+    audit.logError({ request_id: requestId, identity, service, action, justification, latency_ms: Date.now() - startMs, error });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error, request_id: requestId }) }],
+      isError: true,
+    };
+  }
+
+  const latency = Date.now() - startMs;
+
+  if (!proxyResult.ok) {
+    audit.logError({ request_id: requestId, identity, service, action, justification, latency_ms: latency, error: proxyResult.error });
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: proxyResult.error, request_id: requestId }) }],
+      isError: true,
+    };
+  }
+
+  // Record TTL grant after successful call
+  if (ttl !== undefined) {
+    ttlStore.grant(identity, service, action, ttl);
+  }
+
+  // Success
+  audit.logAllow({ request_id: requestId, identity, service, action, justification, latency_ms: latency });
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ ok: true, result: proxyResult.data, request_id: requestId }) }],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Server bootstrap
 // ---------------------------------------------------------------------------
@@ -145,49 +285,21 @@ async function main(): Promise<void> {
   const identity = process.env["AXIS_IDENTITY"] ?? "unknown";
   const policyPath = process.env["AXIS_POLICY_PATH"] ?? undefined;
 
-  // Determine credential source: cloud (if logged in) or local keystore
-  let keystore: SecretStore;
-  const cloudSession = CloudClient.getSession();
-
-  if (cloudSession) {
-    process.stderr.write("[Axis] Cloud session found — loading credentials from Axis Cloud...\n");
-    try {
-      keystore = await CloudKeystore.build(masterPassword);
-      process.stderr.write("[Axis] Cloud credentials loaded and decrypted.\n");
-    } catch (err) {
-      process.stderr.write(
-        `[Axis] Failed to load cloud credentials: ${(err as Error).message}\n` +
-        "[Axis] Falling back to local keystore.\n"
-      );
-      const localKs = new Keystore(masterPassword);
-      if (!localKs.verifyPassword()) {
-        process.stderr.write("Error: AXIS_MASTER_PASSWORD is incorrect.\n");
-        process.exit(1);
-      }
-      keystore = localKs;
-    }
-  } else {
-    const localKs = new Keystore(masterPassword);
-    if (!localKs.verifyPassword()) {
-      process.stderr.write(
-        "Error: AXIS_MASTER_PASSWORD is incorrect — could not decrypt keystore.\n"
-      );
-      process.exit(1);
-    }
-    keystore = localKs;
+  // Initialize local keystore
+  const localKs = new Keystore(masterPassword);
+  if (!localKs.verifyPassword()) {
+    process.stderr.write(
+      "Error: AXIS_MASTER_PASSWORD is incorrect — could not decrypt keystore.\n"
+    );
+    process.exit(1);
   }
+  const keystore: SecretStore = localKs;
 
   // Initialise shared services
   const policy = new PolicyEngine(policyPath);
   const audit = new AuditLogger();
   const rateLimiter = new RateLimiter();
 
-  // Patch audit logger to also post entries to cloud (fire-and-forget)
-  const _localLog = audit.log.bind(audit);
-  audit.log = (entry: AuditEntry) => {
-    _localLog(entry);
-    postCloudAuditLog(entry);
-  };
   const ttlStore = new TtlStore();
 
   // Watch policy file for changes and hot-reload on edit
@@ -206,7 +318,7 @@ async function main(): Promise<void> {
 
   // Create MCP server
   const server = new Server(
-    { name: "axis", version: "0.1.0" },
+    { name: "axis", version: "0.4.0" },
     { capabilities: { tools: {} } }
   );
 
@@ -214,7 +326,7 @@ async function main(): Promise<void> {
   // List tools handler
   // ---------------------------------------------------------------------------
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [EXECUTE_ACTION_TOOL],
+    tools: [EXECUTE_ACTION_TOOL, LIST_SERVICES_TOOL, LIST_ACTIONS_TOOL],
   }));
 
   // ---------------------------------------------------------------------------
@@ -223,6 +335,58 @@ async function main(): Promise<void> {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
+    // ----- list_services -----
+    if (name === "list_services") {
+      const policies = policy.getPolicies();
+      const serviceMap = new Map<string, string[]>();
+      for (const entry of policies) {
+        if (entry.identity !== identity && entry.identity !== "*") continue;
+        for (const allow of entry.allow) {
+          const svc = allow.service;
+          const existing = serviceMap.get(svc) ?? [];
+          for (const a of allow.actions) {
+            if (!existing.includes(a)) existing.push(a);
+          }
+          serviceMap.set(svc, existing);
+        }
+      }
+      const services = Array.from(serviceMap.entries()).map(([svc, actions]) => {
+        let hasCred = false;
+        try { keystore.getSecret(svc); hasCred = true; } catch { /* no credential */ }
+        return { service: svc, allowed_actions: actions, has_credential: hasCred };
+      });
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ services }) }],
+      };
+    }
+
+    // ----- list_actions -----
+    if (name === "list_actions") {
+      const toolArgs = args as Record<string, unknown>;
+      const svc = toolArgs["service"] as string | undefined;
+      if (!svc) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "Missing required field: service" }) }],
+          isError: true,
+        };
+      }
+      const available = SERVICE_ACTIONS[svc];
+      if (!available) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: `Unknown service: ${svc}` }) }],
+          isError: true,
+        };
+      }
+      const result = available.map((action) => ({
+        action,
+        allowed: policy.isAllowed(identity, svc, action).allowed,
+      }));
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify({ service: svc, available_actions: result }) }],
+      };
+    }
+
+    // ----- execute_action -----
     if (name !== "execute_action") {
       return {
         content: [
@@ -235,221 +399,9 @@ async function main(): Promise<void> {
       };
     }
 
-    // Parse and validate inputs
-    const toolArgs = args as Record<string, unknown>;
-    const service = toolArgs["service"] as string | undefined;
-    const action = toolArgs["action"] as string | undefined;
-    const justification = toolArgs["justification"] as string | undefined;
-    const params = toolArgs["params"] as Record<string, unknown> | undefined;
-
-    if (!service || !action || !justification || params === undefined) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: "Missing required fields: service, action, justification, params",
-            }),
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    const requestId = audit.newRequestId();
-    const startMs = Date.now();
-
-    // ---------------------------------------------------------------------------
-    // Policy check
-    // ---------------------------------------------------------------------------
-    const { allowed, ttl } = policy.isAllowed(identity, service, action);
-
-    if (!allowed) {
-      const reason = `Policy denied: identity="${identity}" service="${service}" action="${action}"`;
-      audit.logDeny({
-        request_id: requestId,
-        identity,
-        service,
-        action,
-        justification,
-        reason,
-      });
-
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              denied: true,
-              reason,
-              request_id: requestId,
-            }),
-          },
-        ],
-      };
-    }
-
-    // ---------------------------------------------------------------------------
-    // TTL check (short-lived grant enforcement)
-    // ---------------------------------------------------------------------------
-    if (ttl !== undefined) {
-      const ttlState = ttlStore.check(identity, service, action);
-      if (ttlState.active) {
-        const remainingSecs = Math.ceil(ttlState.remainingMs / 1000);
-        const reason = `TTL active: try again in ${remainingSecs}s (grant TTL=${ttl}s)`;
-        audit.logDeny({
-          request_id: requestId,
-          identity,
-          service,
-          action,
-          justification,
-          reason,
-        });
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({ denied: true, reason, request_id: requestId }),
-            },
-          ],
-        };
-      }
-    }
-
-    // ---------------------------------------------------------------------------
-    // Rate limit check
-    // ---------------------------------------------------------------------------
-    const rateLimit = policy.getRateLimit(identity);
-    if (rateLimit !== null && !rateLimiter.check(identity, rateLimit)) {
-      const reason = `Rate limit exceeded for identity "${identity}"`;
-      audit.logDeny({
-        request_id: requestId,
-        identity,
-        service,
-        action,
-        justification,
-        reason,
-      });
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ denied: true, reason, request_id: requestId }),
-          },
-        ],
-      };
-    }
-
-    // ---------------------------------------------------------------------------
-    // Payload size check (1MB limit)
-    // ---------------------------------------------------------------------------
-    const MAX_PAYLOAD_BYTES = 1_048_576;
-    const serialized = JSON.stringify(params);
-    if (serialized.length > MAX_PAYLOAD_BYTES) {
-      audit.logDeny({
-        request_id: requestId,
-        identity,
-        service,
-        action,
-        justification,
-        reason: `Payload size ${serialized.length} bytes exceeds limit of ${MAX_PAYLOAD_BYTES} bytes`,
-      });
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              error: `Request payload too large (${serialized.length} bytes). Maximum is ${MAX_PAYLOAD_BYTES} bytes (1MB).`,
-              request_id: requestId,
-            }),
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // ---------------------------------------------------------------------------
-    // Proxy call
-    // ---------------------------------------------------------------------------
-    let proxyResult;
-    try {
-      proxyResult = await proxyRequest(service, action, params, keystore);
-    } catch (err) {
-      const error = `Unexpected proxy error: ${(err as Error).message}`;
-      audit.logError({
-        request_id: requestId,
-        identity,
-        service,
-        action,
-        justification,
-        latency_ms: Date.now() - startMs,
-        error,
-      });
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ ok: false, error, request_id: requestId }),
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    const latency = Date.now() - startMs;
-
-    if (!proxyResult.ok) {
-      audit.logError({
-        request_id: requestId,
-        identity,
-        service,
-        action,
-        justification,
-        latency_ms: latency,
-        error: proxyResult.error,
-      });
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              ok: false,
-              error: proxyResult.error,
-              request_id: requestId,
-            }),
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // Record TTL grant after successful call
-    if (ttl !== undefined) {
-      ttlStore.grant(identity, service, action, ttl);
-    }
-
-    // Success
-    audit.logAllow({
-      request_id: requestId,
-      identity,
-      service,
-      action,
-      justification,
-      latency_ms: latency,
+    return handleExecuteAction(args as Record<string, unknown>, {
+      identity, policy, audit, keystore, rateLimiter, ttlStore,
     });
-
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({
-            ok: true,
-            result: proxyResult.data,
-            request_id: requestId,
-          }),
-        },
-      ],
-    };
   });
 
   // ---------------------------------------------------------------------------

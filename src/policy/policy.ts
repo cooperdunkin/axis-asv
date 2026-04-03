@@ -191,6 +191,61 @@ export class PolicyEngine {
   }
 
   /**
+   * Add an allow rule for an identity + service.
+   * If the identity entry doesn't exist, creates one.
+   * If a rule for the service already exists, merges actions.
+   * Writes the updated YAML back to disk.
+   */
+  addAllowRule(identity: string, service: string, actions: string[]): void {
+    const raw = fs.readFileSync(this.policyPath, "utf-8");
+    const parsed = yaml.load(raw) as PolicyFile;
+
+    let entry = parsed.policies.find((p) => p.identity === identity);
+    if (!entry) {
+      entry = { identity, allow: [] };
+      parsed.policies.push(entry);
+    }
+
+    let rule = entry.allow.find((a) => a.service === service);
+    if (rule) {
+      // Merge actions — if adding "*", replace all; otherwise add unique
+      if (actions.includes("*")) {
+        rule.actions = ["*"];
+      } else {
+        for (const a of actions) {
+          if (!rule.actions.includes(a)) rule.actions.push(a);
+        }
+      }
+    } else {
+      entry.allow.push({ service, actions });
+    }
+
+    fs.writeFileSync(this.policyPath, yaml.dump(parsed, { lineWidth: -1 }), "utf-8");
+    this.policies = this.load();
+  }
+
+  /**
+   * Remove all allow rules for a service under an identity.
+   * Writes the updated YAML back to disk.
+   * Returns true if a rule was removed, false if none found.
+   */
+  removeAllowRule(identity: string, service: string): boolean {
+    const raw = fs.readFileSync(this.policyPath, "utf-8");
+    const parsed = yaml.load(raw) as PolicyFile;
+
+    const entry = parsed.policies.find((p) => p.identity === identity);
+    if (!entry) return false;
+
+    const before = entry.allow.length;
+    entry.allow = entry.allow.filter((a) => a.service !== service);
+    if (entry.allow.length === before) return false;
+
+    fs.writeFileSync(this.policyPath, yaml.dump(parsed, { lineWidth: -1 }), "utf-8");
+    this.policies = this.load();
+    return true;
+  }
+
+  /**
    * Return the rate limit (requests per minute) configured for an identity.
    * Checks exact identity match first, then wildcard "*".
    * Returns null if no rate limit is configured.

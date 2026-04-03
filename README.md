@@ -1,7 +1,7 @@
 # Axis
 
 [![npm version](https://img.shields.io/npm/v/axis-asv.svg)](https://www.npmjs.com/package/axis-asv)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 [![Website](https://img.shields.io/badge/website-axisproxy.com-brightgreen)](https://axisproxy.com/)
 
 **Your AI agent can read your `.env` file. Axis stops that.**
@@ -10,14 +10,14 @@ Axis is the credential broker for AI agents — an MCP-native vault where agents
 
 ```
 Agent (Claude Code / Cursor / Devin)
-  │
-  │  execute_action({ service: "openai", action: "responses.create", ... })
-  ▼
-Axis MCP Server  ──── policy check ──── audit log
-  │
-  │  injects stored API key server-side
-  ▼
-OpenAI API  ──── response ────► back to agent
+  |
+  |  execute_action({ service: "openai", action: "responses.create", ... })
+  v
+Axis MCP Server  ---- policy check ---- audit log
+  |
+  |  injects stored API key server-side
+  v
+OpenAI API  ---- response ----> back to agent
 
 The API key is never returned to the agent.
 ```
@@ -69,13 +69,11 @@ Axis is the missing primitive: **time-limited, action-scoped credential access w
 npm install -g axis-asv
 ```
 
-### 2. Create an account
+### 2. Initialize
 
 ```bash
-axis signup
+axis init
 ```
-
-This creates your Axis Cloud account. Your credentials are encrypted on your machine before being sent — the cloud stores only ciphertext, never plaintext keys.
 
 ### 3. Store your first credential
 
@@ -84,10 +82,18 @@ axis add openai
 ```
 
 You'll be prompted for:
-1. Your **master password** — used to encrypt the key locally before it leaves your machine
+1. Your **master password** — used to encrypt the key locally
 2. Your **OpenAI API key** (`sk-...`)
 
-### 4. Configure your MCP host
+### 4. Store master password in OS keychain
+
+```bash
+axis keychain set
+```
+
+This stores your master password in the OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager) so Axis can start without a plaintext password in config.
+
+### 5. Configure your MCP host
 
 #### Claude Code
 
@@ -100,13 +106,14 @@ Add to `~/.claude.json` (global) or `.mcp.json` (project-level):
       "command": "axis",
       "args": ["mcp"],
       "env": {
-        "AXIS_IDENTITY": "local-dev",
-        "AXIS_MASTER_PASSWORD": "your-master-password"
+        "AXIS_IDENTITY": "local-dev"
       }
     }
   }
 }
 ```
+
+Axis reads the master password from your OS keychain automatically. If you prefer to use an environment variable instead, add `"AXIS_MASTER_PASSWORD": "your-password"` to the `env` block above.
 
 #### Cursor
 
@@ -119,17 +126,14 @@ Add to `~/.cursor/mcp.json` or your project's `.cursor/mcp.json`:
       "command": "axis",
       "args": ["mcp"],
       "env": {
-        "AXIS_IDENTITY": "local-dev",
-        "AXIS_MASTER_PASSWORD": "your-master-password"
+        "AXIS_IDENTITY": "local-dev"
       }
     }
   }
 }
 ```
 
-> **Tip:** Use `axis keychain set` to store the master password in your OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager) — then remove `AXIS_MASTER_PASSWORD` from the config entirely. See [Keychain Setup](#keychain-setup).
-
-### 5. Verify
+### 6. Verify
 
 ```bash
 axis doctor
@@ -179,14 +183,14 @@ Axis checks the policy, proxies the call, and returns the API response. The agen
 
 ## Security Model
 
-### Zero-knowledge cloud
+### Local-first encryption
 
-Axis Cloud stores only ciphertext. Your master password never leaves your machine. Even if the database were breached, your keys are safe.
+All secrets are encrypted on your machine with AES-256-GCM. Your master password never leaves your machine.
 
 ```
-Your machine:     plaintext secret + master password → AES-256-GCM → ciphertext
-Axis Cloud:       stores ciphertext, salt, IV only — never the plaintext or password
-MCP Server:       fetches ciphertext → decrypts locally → proxies call → returns response
+Your machine:     plaintext secret + master password -> AES-256-GCM -> ciphertext
+Keystore:         stores ciphertext, salt, IV only — never the plaintext or password
+MCP Server:       decrypts locally -> proxies call -> returns response
 ```
 
 ### Deny-by-default policy
@@ -213,7 +217,7 @@ The `identity` comes from `AXIS_IDENTITY` in your MCP config. Policy files hot-r
 
 ### Audit log
 
-Every request — allowed or denied — is logged locally and to your Axis Cloud account:
+Every request — allowed or denied — is logged locally:
 
 ```json
 {
@@ -228,7 +232,7 @@ Every request — allowed or denied — is logged locally and to your Axis Cloud
 }
 ```
 
-Secrets are never logged. View logs with `axis logs` or in your Axis Cloud dashboard.
+Secrets are never logged. View logs with `axis logs`.
 
 ### Encryption
 
@@ -243,15 +247,6 @@ Secrets are never logged. View logs with `axis logs` or in your Axis Cloud dashb
 ---
 
 ## CLI Reference
-
-### Account
-
-```bash
-axis signup              # Create Axis Cloud account
-axis login               # Sign in
-axis logout              # Sign out
-axis whoami              # Show current account and plan
-```
 
 ### Credentials
 
@@ -279,34 +274,6 @@ axis keychain delete     # Remove from keychain
 axis keychain status     # Check if master password is in keychain
 ```
 
----
-
-## Keychain Setup
-
-Storing `AXIS_MASTER_PASSWORD` in your MCP config file is convenient but keeps it in plaintext on disk. To eliminate this:
-
-```bash
-axis keychain set
-```
-
-Then update your MCP config to remove `AXIS_MASTER_PASSWORD`:
-
-```json
-{
-  "mcpServers": {
-    "axis": {
-      "command": "axis",
-      "args": ["mcp"],
-      "env": {
-        "AXIS_IDENTITY": "local-dev"
-      }
-    }
-  }
-}
-```
-
-Axis reads the master password from the OS keychain automatically at startup.
-
 **Linux:** Install libsecret first:
 ```bash
 # Ubuntu/Debian
@@ -314,20 +281,6 @@ sudo apt install libsecret-1-dev
 # Fedora
 sudo dnf install libsecret-devel
 ```
-
----
-
-## Plans
-
-| | Free | Pro | Team |
-|--|------|-----|------|
-| Credentials | 3 | Unlimited | Unlimited |
-| Services | 11 | 11 | 11 |
-| Audit log | Local only | 90 days cloud | 90 days cloud |
-| Team members | 1 | 1 | Unlimited |
-| Price | Free | $15/mo | $49/seat/mo |
-
-Upgrade at [axisproxy.com](https://axisproxy.com).
 
 ---
 
@@ -342,7 +295,6 @@ Upgrade at [axisproxy.com](https://axisproxy.com).
 | Credential stored in plaintext | AES-256-GCM at rest, unique salt+IV per entry |
 | Unauthorized service access | Deny-by-default policy, identity-scoped rules |
 | Wrong action on a service | Policy rules scoped to `service + action` pairs |
-| Cloud database breach | Cloud stores only ciphertext — master password never sent |
 
 ### What Axis does not protect against
 
@@ -358,9 +310,9 @@ Upgrade at [axisproxy.com](https://axisproxy.com).
 ## Development
 
 ```bash
-npm run build         # compile TypeScript → dist/
+npm run build         # compile TypeScript -> dist/
 npm run build:watch   # watch mode
-npm test              # run test suite (111 tests, no build needed)
+npm test              # run test suite (no build needed)
 npm run lint          # type-check without emitting
 ```
 
@@ -375,4 +327,4 @@ npm run lint          # type-check without emitting
 
 ## License
 
-MIT — [axisproxy.com](https://axisproxy.com)
+BUSL-1.1 — [axisproxy.com](https://axisproxy.com)
