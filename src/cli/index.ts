@@ -900,7 +900,7 @@ async function cmdDashboard(): Promise<void> {
 
 function printHelp(): void {
   print(`
-Axis v0.6.0
+Axis v0.7.0
 
 Usage:
   axis <command> [args]
