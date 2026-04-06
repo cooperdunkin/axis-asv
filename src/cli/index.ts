@@ -20,7 +20,7 @@ import * as path from "path";
 import * as os from "os";
 import * as crypto from "crypto";
 import * as readline from "readline";
-import { execFileSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { Keystore, axisHome, keystorePath } from "../vault/keystore.js";
 import { PolicyEngine, defaultPolicyPath } from "../policy/policy.js";
 import { AuditLogger, auditLogPath, AuditEntry } from "../audit/audit.js";
@@ -43,53 +43,60 @@ function die(msg: string, code = 1): never {
   process.exit(code);
 }
 
-/** Prompt for a value. Uses hidden input on TTY when hidden=true. */
+/** Prompt for a value. Uses raw-mode stdin when hidden=true to suppress echo. */
 async function prompt(question: string, hidden = false): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!process.stdin.isTTY) {
-      reject(new Error("stdin is not a TTY — cannot prompt interactively."));
-      return;
-    }
+  if (!process.stdin.isTTY) {
+    throw new Error("stdin is not a TTY — cannot prompt interactively.");
+  }
 
-    if (hidden && process.platform !== "win32") {
-      // Use readline with muted output
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        terminal: true,
-      });
-
+  if (hidden) {
+    // Read password character-by-character in raw mode — no echo, no reliance on
+    // undocumented readline internals that break across Node versions.
+    return new Promise((resolve) => {
       process.stdout.write(question);
+      const buf: string[] = [];
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.setEncoding("utf8");
 
-      // Mute output during hidden input
-      const mute = (): void => {
-        process.stdout.write("\x1B[?25l"); // hide cursor (cosmetic)
+      const onData = (ch: string): void => {
+        // Enter / Return
+        if (ch === "\r" || ch === "\n") {
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdin.removeListener("data", onData);
+          process.stdout.write("\n");
+          resolve(buf.join(""));
+          return;
+        }
+        // Ctrl-C
+        if (ch === "\x03") {
+          process.stdin.setRawMode(false);
+          process.stdout.write("\n");
+          process.exit(130);
+        }
+        // Backspace / Delete
+        if (ch === "\x7f" || ch === "\b") {
+          buf.pop();
+          return;
+        }
+        buf.push(ch);
       };
-      const unmute = (val: string): void => {
-        process.stdout.write("\n");
-        process.stdout.write("\x1B[?25h"); // restore cursor
-        rl.close();
-        resolve(val);
-      };
 
-      // Override _writeToOutput to suppress echoing
-      (rl as unknown as { _writeToOutput: (s: string) => void })._writeToOutput =
-        function (_stringToWrite: string) {
-          // suppress all echoed characters
-        };
+      process.stdin.on("data", onData);
+    });
+  }
 
-      mute();
-      rl.question("", unmute);
-    } else {
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-      rl.question(question, (answer) => {
-        rl.close();
-        resolve(answer);
-      });
-    }
+  // Non-hidden: normal readline prompt
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
   });
 }
 
@@ -214,10 +221,8 @@ async function cmdSetup(): Promise<void> {
   print("");
 
   // Store in keychain if possible
-  let keychainStored = false;
   try {
     await keychainSet(masterPw);
-    keychainStored = true;
     print("  ✓ Master password stored in OS keychain");
   } catch {
     print("  · OS keychain not available — you'll need AXIS_MASTER_PASSWORD env var");
@@ -266,43 +271,67 @@ async function cmdSetup(): Promise<void> {
     print("  · Could not update policy — add rules manually to config/policy.yaml\n");
   }
 
-  // ── Step 4: MCP config ────────────────────────────────────────
-  print("Step 4/4 — Configure your MCP host\n");
+  // ── Step 4: MCP auto-registration ─────────────────────────────
+  print("Step 4/4 — Registering MCP server\n");
 
-  const mcpConfig = keychainStored
-    ? {
-        mcpServers: {
-          axis: {
-            command: "axis",
-            args: ["mcp"],
-            env: {
-              AXIS_IDENTITY: "local-dev",
-            },
-          },
-        },
+  const manualConfigJson = JSON.stringify({
+    axis: {
+      command: "axis",
+      args: ["mcp"],
+      env: { AXIS_IDENTITY: "claude-code" },
+    },
+  }, null, 2);
+
+  const printManualConfig = (): void => {
+    print('\n  Add this to your ~/.claude.json under "mcpServers":\n');
+    print(manualConfigJson);
+  };
+
+  try {
+    // -- Claude Code auto-registration --
+    let claudeRegistered = false;
+    try {
+      execSync("command -v claude", { stdio: "ignore" });
+      // claude CLI is available — register via official command
+      execSync("claude mcp add axis -- axis mcp", { stdio: "ignore" });
+      print("  ✓ Registered Axis MCP server with Claude Code");
+      claudeRegistered = true;
+    } catch {
+      // claude CLI not found or command failed — will show manual config below
+    }
+
+    // -- Cursor auto-registration --
+    const cursorConfigPath = path.join(os.homedir(), ".cursor", "mcp.json");
+    try {
+      if (fs.existsSync(cursorConfigPath)) {
+        let cursorConfig: Record<string, unknown> = {};
+        try {
+          cursorConfig = JSON.parse(fs.readFileSync(cursorConfigPath, "utf8"));
+        } catch {
+          cursorConfig = {};
+        }
+        const servers = (cursorConfig["mcpServers"] ?? {}) as Record<string, unknown>;
+        servers["axis"] = {
+          command: "axis",
+          args: ["mcp"],
+          env: { AXIS_IDENTITY: "claude-code" },
+        };
+        cursorConfig["mcpServers"] = servers;
+        fs.writeFileSync(cursorConfigPath, JSON.stringify(cursorConfig, null, 2) + "\n");
+        print("  ✓ Registered Axis MCP server with Cursor");
       }
-    : {
-        mcpServers: {
-          axis: {
-            command: "axis",
-            args: ["mcp"],
-            env: {
-              AXIS_IDENTITY: "local-dev",
-              AXIS_MASTER_PASSWORD: "<your-master-password>",
-            },
-          },
-        },
-      };
+    } catch {
+      // Cursor config not writable — skip silently
+    }
 
-  print("  Add this to your MCP config:\n");
-  print("  Claude Code:  ~/.claude.json or .mcp.json");
-  print("  Cursor:       ~/.cursor/mcp.json\n");
-  print("  ┌─── .mcp.json ───────────────────────────────────────");
-  const configLines = JSON.stringify(mcpConfig, null, 2).split("\n");
-  for (const line of configLines) {
-    print(`  │ ${line}`);
+    if (!claudeRegistered) {
+      printManualConfig();
+    }
+  } catch {
+    // Catch-all: never crash the wizard
+    printManualConfig();
   }
-  print("  └──────────────────────────────────────────────────────\n");
+  print("");
 
   // ── Done ──────────────────────────────────────────────────────
   print("┌─────────────────────────────────────────┐");
@@ -329,7 +358,15 @@ async function cmdAdd(service: string, args: string[] = []): Promise<void> {
 
   // Enforce minimum password length when creating a new keystore (first secret)
   const ksExists = fs.existsSync(keystorePath());
-  const isFirstSecret = !ksExists || new Keystore("").listServices().length === 0;
+  let isFirstSecret = !ksExists;
+  if (ksExists) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(keystorePath(), "utf8"));
+      isFirstSecret = Object.keys(raw.entries || {}).length === 0;
+    } catch {
+      isFirstSecret = false;
+    }
+  }
 
   let masterPw: string;
   if (useStdin && process.env["AXIS_MASTER_PASSWORD"]) {
