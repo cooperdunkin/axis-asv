@@ -1,16 +1,3 @@
-# Axis Policy File
-# Deny-by-default: requests not matching an allow rule are rejected.
-#
-# Identity is read from the AXIS_IDENTITY environment variable set in your
-# MCP host configuration (Cursor / Claude Code mcpServers env block).
-#
-# Supported wildcards:
-#   identity: "*"   — matches any identity
-#   service:  "*"   — matches any service
-#   actions:  ["*"] — matches any action
-#
-# Add a new block under "policies" for each identity you want to authorize.
-
 policies:
   - identity: local-dev
     allow:
@@ -19,114 +6,67 @@ policies:
           - responses.create
       - service: anthropic
         actions:
-          - messages.create
+          - '*'
       - service: github
         actions:
-          - repos.get
-          - issues.create
-          - pulls.create
-          - contents.read
+          - '*'
 
-  # Example: CI pipeline with broader access
-  # - identity: ci-runner
-  #   allow:
-  #     - service: openai
-  #       actions:
-  #         - responses.create
-  #         - "*"
-
-  # Example: wildcard identity (grants all identities access)
-  # - identity: "*"
-  #   allow:
-  #     - service: openai
-  #       actions:
-  #         - responses.create
-
-  # Example: Anthropic connector
-  # - identity: local-dev
-  #   allow:
-  #     - service: anthropic
-  #       actions:
-  #         - messages.create
-
-  # Example: GitHub connector
-  # - identity: local-dev
-  #   allow:
-  #     - service: github
-  #       actions:
-  #         - repos.get
-  #         - issues.create
-
-  # Example: rate limiting (60 requests per minute)
-  # - identity: local-dev
-  #   rateLimit:
-  #     requestsPerMinute: 60
-  #   allow:
-  #     - service: openai
-  #       actions:
-  #         - responses.create
-
-  # Example: Stripe connector (with TTL — one call allowed per 5 minutes)
-  # - identity: local-dev
-  #   allow:
-  #     - service: stripe
-  #       actions:
-  #         - paymentIntents.create
-  #         - customers.list
-  #       ttl: 300
-
-  # Example: Slack connector
-  # - identity: local-dev
-  #   allow:
-  #     - service: slack
-  #       actions:
-  #         - chat.postMessage
-  #         - conversations.list
-
-  # Example: SendGrid connector
-  # - identity: local-dev
-  #   allow:
-  #     - service: sendgrid
-  #       actions:
-  #         - mail.send
-
-  # Example: Notion connector
-  # - identity: local-dev
-  #   allow:
-  #     - service: notion
-  #       actions:
-  #         - pages.create
-  #         - databases.query
-
-  # Example: Linear connector
-  # - identity: local-dev
-  #   allow:
-  #     - service: linear
-  #       actions:
-  #         - issues.create
-
-  # Example: Twilio connector
-  # Credential format: store as "accountSid:authToken" (combined secret)
-  # - identity: local-dev
-  #   allow:
-  #     - service: twilio
-  #       actions:
-  #         - messages.create
-
-  # Example: AWS S3 connector
-  # Credential format: store as "accessKeyId:secretAccessKey" (combined secret)
-  # - identity: local-dev
-  #   allow:
-  #     - service: aws
-  #       actions:
-  #         - s3.getObject
-  #         - s3.putObject
-
-  # Example: GCP Cloud Storage connector
-  # Credential: store a pre-generated OAuth2 access token (re-add when it expires)
-  # - identity: local-dev
-  #   allow:
-  #     - service: gcp
-  #       actions:
-  #         - storage.getObject
-  #         - storage.listObjects
+# ── Examples ─────────────────────────────────────────────────
+# Uncomment and modify the blocks below for your use case.
+#
+# AI Services:
+#   - identity: my-agent
+#     allow:
+#       - service: openai
+#         actions: ["responses.create"]
+#       - service: anthropic
+#         actions: ["messages.create"]
+#
+# Developer Tools:
+#   - identity: my-agent
+#     allow:
+#       - service: github
+#         actions: ["repos.get", "issues.create", "pulls.create", "contents.read"]
+#       - service: linear
+#         actions: ["issues.create"]
+#
+# Communication:
+#   - identity: my-agent
+#     allow:
+#       - service: slack
+#         actions: ["chat.postMessage", "conversations.list"]
+#       - service: sendgrid
+#         actions: ["mail.send"]
+#       - service: twilio
+#         actions: ["messages.create"]
+#
+# Business Tools:
+#   - identity: my-agent
+#     allow:
+#       - service: stripe
+#         actions: ["paymentIntents.create", "customers.list"]
+#       - service: notion
+#         actions: ["pages.create", "databases.query"]
+#
+# Cloud Infrastructure:
+#   - identity: my-agent
+#     allow:
+#       - service: aws
+#         actions: ["s3.getObject", "s3.putObject"]
+#       - service: gcp
+#         actions: ["storage.getObject", "storage.listObjects"]
+#
+# Rate Limiting (optional):
+#   - identity: my-agent
+#     rateLimit:
+#       requestsPerMinute: 60
+#     allow:
+#       - service: openai
+#         actions: ["*"]
+#
+# TTL Grants (optional):
+#   - identity: ci-runner
+#     allow:
+#       - service: stripe
+#         actions: ["paymentIntents.create"]
+#         ttl: 300

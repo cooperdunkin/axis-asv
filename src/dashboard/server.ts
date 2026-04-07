@@ -77,82 +77,98 @@ export async function startDashboard(masterPassword: string, port = DEFAULT_PORT
 
   // List services (metadata only — never secrets)
   app.get("/api/services", (_req, res) => {
-    const services = ks.listServices();
-    res.json({ services, count: services.length, limit: 3 });
+    try {
+      const services = ks.listServices();
+      res.json({ services, count: services.length, limit: 3 });
+    } catch {
+      res.status(500).json({ error: "Internal server error" });
+    }
   });
 
   // Audit logs
   app.get("/api/logs", (req, res) => {
-    const logPath = auditLogPath();
-    if (!fs.existsSync(logPath)) {
-      res.json({ entries: [], total: 0 });
-      return;
-    }
-
-    const lastN = parseInt(req.query.last as string) || 100;
-    const serviceFilter = req.query.service as string | undefined;
-    const decisionFilter = req.query.decision as string | undefined;
-
-    const content = fs.readFileSync(logPath, "utf8");
-    const lines = content.split("\n").filter((l) => l.trim().length > 0);
-
-    const entries: AuditEntry[] = [];
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line) as AuditEntry;
-        if (serviceFilter && entry.service !== serviceFilter) continue;
-        if (decisionFilter && entry.decision !== decisionFilter) continue;
-        entries.push(entry);
-      } catch {
-        // Skip malformed lines
+    try {
+      const logPath = auditLogPath();
+      if (!fs.existsSync(logPath)) {
+        res.status(404).json({ error: "No audit log found", entries: [], total: 0 });
+        return;
       }
-    }
 
-    const sliced = entries.slice(-lastN);
-    res.json({ entries: sliced, total: entries.length });
+      const lastN = Math.min(Math.max(parseInt(req.query.last as string, 10) || 100, 1), 10000);
+      const serviceFilter = req.query.service as string | undefined;
+      const decisionFilter = req.query.decision as string | undefined;
+
+      const content = fs.readFileSync(logPath, "utf8");
+      const lines = content.split("\n").filter((l) => l.trim().length > 0);
+
+      const entries: AuditEntry[] = [];
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line) as AuditEntry;
+          if (serviceFilter && entry.service !== serviceFilter) continue;
+          if (decisionFilter && entry.decision !== decisionFilter) continue;
+          entries.push(entry);
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      const sliced = entries.slice(-lastN);
+      res.json({ entries: sliced, total: entries.length });
+    } catch {
+      res.status(500).json({ error: "Internal server error" });
+    }
   });
 
   // Policy rules
   app.get("/api/policy", (_req, res) => {
-    if (!policy) {
-      res.json({ error: "No policy file found", rules: [] });
-      return;
+    try {
+      if (!policy) {
+        res.status(404).json({ error: "No policy file found", rules: [] });
+        return;
+      }
+      const rules = policy.getPolicies();
+      res.json({ rules, path: policy.getPath() });
+    } catch {
+      res.status(500).json({ error: "Internal server error" });
     }
-    const rules = policy.getPolicies();
-    res.json({ rules, path: policy.getPath() });
   });
 
   // Aggregate stats
   app.get("/api/stats", (_req, res) => {
-    const logPath = auditLogPath();
-    if (!fs.existsSync(logPath)) {
-      res.json({ total: 0, allowed: 0, denied: 0, errors: 0, byService: {} });
-      return;
-    }
-
-    const content = fs.readFileSync(logPath, "utf8");
-    const lines = content.split("\n").filter((l) => l.trim().length > 0);
-
-    let total = 0;
-    let allowed = 0;
-    let denied = 0;
-    let errors = 0;
-    const byService: Record<string, number> = {};
-
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line) as AuditEntry;
-        total++;
-        if (entry.decision === "allow") allowed++;
-        else if (entry.decision === "deny") denied++;
-        else if (entry.decision === "error") errors++;
-        byService[entry.service] = (byService[entry.service] || 0) + 1;
-      } catch {
-        // Skip
+    try {
+      const logPath = auditLogPath();
+      if (!fs.existsSync(logPath)) {
+        res.status(404).json({ error: "No audit log found", total: 0, allowed: 0, denied: 0, errors: 0, byService: {} });
+        return;
       }
-    }
 
-    res.json({ total, allowed, denied, errors, byService });
+      const content = fs.readFileSync(logPath, "utf8");
+      const lines = content.split("\n").filter((l) => l.trim().length > 0);
+
+      let total = 0;
+      let allowed = 0;
+      let denied = 0;
+      let errors = 0;
+      const byService: Record<string, number> = {};
+
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line) as AuditEntry;
+          total++;
+          if (entry.decision === "allow") allowed++;
+          else if (entry.decision === "deny") denied++;
+          else if (entry.decision === "error") errors++;
+          byService[entry.service] = (byService[entry.service] || 0) + 1;
+        } catch {
+          // Skip
+        }
+      }
+
+      res.json({ total, allowed, denied, errors, byService });
+    } catch {
+      res.status(500).json({ error: "Internal server error" });
+    }
   });
 
   // ── Serve static dashboard ────────────────────────────────────

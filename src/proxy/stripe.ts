@@ -101,9 +101,10 @@ export function validatePaymentIntentsCreateParams(
   params: unknown
 ): PaymentIntentsCreateParams {
   const p = requireBaseObject(params);
-  requireNumber(p, "amount");
-  requireString(p, "currency");
-  return p as PaymentIntentsCreateParams;
+  const validated = { ...p, amount: requireNumber(p, "amount"), currency: requireString(p, "currency") };
+  if (validated.amount <= 0) throw new Error("amount must be a positive integer (in cents)");
+  if (!Number.isInteger(validated.amount)) throw new Error("amount must be an integer (cents, not dollars)");
+  return validated as PaymentIntentsCreateParams;
 }
 
 export function validateCustomersListParams(
@@ -212,9 +213,11 @@ async function proxyPaymentIntentsCreate(
   const { amount, currency, ...rest } = validated;
   const body = { amount: String(amount), currency, ...sanitizeParams(rest as Record<string, unknown>) };
   const url = `${STRIPE_API_BASE}/v1/payment_intents`;
-  const result = await stripeFetch(url, "POST", apiKey, body as Record<string, unknown>);
-  apiKey = "";
-  return result;
+  try {
+    return await stripeFetch(url, "POST", apiKey, body as Record<string, unknown>);
+  } finally {
+    apiKey = "";
+  }
 }
 
 async function proxyCustomersList(
@@ -246,9 +249,11 @@ async function proxyCustomersList(
     }, {})
   ).toString();
   const url = `${STRIPE_API_BASE}/v1/customers${queryParams ? `?${queryParams}` : ""}`;
-  const result = await stripeFetch(url, "GET", apiKey);
-  apiKey = "";
-  return result;
+  try {
+    return await stripeFetch(url, "GET", apiKey);
+  } finally {
+    apiKey = "";
+  }
 }
 
 // ---------------------------------------------------------------------------

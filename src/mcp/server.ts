@@ -177,7 +177,7 @@ export async function handleExecuteAction(
   const justification = args["justification"] as string | undefined;
   const params = args["params"] as Record<string, unknown> | undefined;
 
-  if (!service || !action || !justification || params === undefined) {
+  if (!service || !action || !justification || !params || typeof params !== 'object') {
     return {
       content: [{
         type: "text" as const,
@@ -318,7 +318,7 @@ async function main(): Promise<void> {
 
   // Create MCP server
   const server = new Server(
-    { name: "axis", version: "0.7.0" },
+    { name: "axis", version: "0.8.0" },
     { capabilities: { tools: {} } }
   );
 

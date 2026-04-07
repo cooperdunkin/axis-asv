@@ -203,14 +203,20 @@ async function proxyMailSend(
     ],
     from: { email: validated.from },
     subject: validated.subject,
-    ...(validated.text ? { content: [{ type: "text/plain", value: validated.text }] } : {}),
-    ...(validated.html ? { content: [{ type: "text/html", value: validated.html }] } : {}),
+    content: (() => {
+      const c: Array<{ type: string; value: string }> = [];
+      if (validated.text) c.push({ type: "text/plain", value: validated.text });
+      if (validated.html) c.push({ type: "text/html", value: validated.html });
+      return c;
+    })(),
   };
 
   const url = `${SENDGRID_API_BASE}/v3/mail/send`;
-  const result = await sendgridFetch(url, "POST", apiKey, body);
-  apiKey = "";
-  return result;
+  try {
+    return await sendgridFetch(url, "POST", apiKey, body);
+  } finally {
+    apiKey = "";
+  }
 }
 
 // ---------------------------------------------------------------------------

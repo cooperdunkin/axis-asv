@@ -185,9 +185,11 @@ async function proxyChatPostMessage(
   const { channel, text, ...rest } = validated;
   const body = { channel, text, ...sanitizeParams(rest as Record<string, unknown>) };
   const url = `${SLACK_API_BASE}/chat.postMessage`;
-  const result = await slackFetch(url, "POST", token, body);
-  token = "";
-  return result;
+  try {
+    return await slackFetch(url, "POST", token, body);
+  } finally {
+    token = "";
+  }
 }
 
 async function proxyConversationsList(
@@ -219,9 +221,11 @@ async function proxyConversationsList(
     }, {})
   ).toString();
   const url = `${SLACK_API_BASE}/conversations.list${queryParams ? `?${queryParams}` : ""}`;
-  const result = await slackFetch(url, "GET", token);
-  token = "";
-  return result;
+  try {
+    return await slackFetch(url, "GET", token);
+  } finally {
+    token = "";
+  }
 }
 
 // ---------------------------------------------------------------------------

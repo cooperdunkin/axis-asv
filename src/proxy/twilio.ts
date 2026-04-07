@@ -208,9 +208,11 @@ async function proxyMessagesCreate(
   }
 
   const url = `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(accountSid)}/Messages.json`;
-  const result = await twilioFetch(url, accountSid, authToken, formBody);
-  authToken = "";
-  return result;
+  try {
+    return await twilioFetch(url, accountSid, authToken, formBody);
+  } finally {
+    authToken = "";
+  }
 }
 
 // ---------------------------------------------------------------------------

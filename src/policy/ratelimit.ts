@@ -29,7 +29,19 @@ export class RateLimiter {
    * @param limitPerMinute - Maximum allowed requests within the window.
    * @returns true if the request is allowed, false if rate-limited.
    */
+  /** Remove expired window records to prevent unbounded Map growth. */
+  cleanup(): void {
+    const now = Date.now();
+    for (const [key, record] of this.windows.entries()) {
+      if (now - record.windowStart > this.windowMs * 2) {
+        this.windows.delete(key);
+      }
+    }
+  }
+
   check(identity: string, limitPerMinute: number): boolean {
+    if (limitPerMinute <= 0) return true; // No valid limit = allow (fail-open for misconfigured rate limits)
+    if (this.windows.size > 1000) this.cleanup();
     const now = Date.now();
     const record = this.windows.get(identity);
 

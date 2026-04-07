@@ -87,7 +87,8 @@
 
       if (!health || !stats || !services) return <div className="text-muted p-8">Loading...</div>;
 
-      const maxByService = Math.max(...Object.values(stats.byService).map(Number), 1);
+      const serviceValues = Object.values(stats.byService).map(Number);
+      const maxByService = serviceValues.length > 0 ? Math.max(...serviceValues) : 1;
 
       return (
         <div className="space-y-6">

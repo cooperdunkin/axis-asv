@@ -156,17 +156,21 @@ export class PolicyEngine {
     service: string,
     action: string
   ): { allowed: boolean; ttl?: number } {
+    const lIdentity = identity.toLowerCase();
+    const lService = service.toLowerCase();
+    const lAction = action.toLowerCase();
+
     for (const entry of this.policies) {
       const identityMatches =
-        entry.identity === identity || entry.identity === "*";
+        entry.identity === "*" || entry.identity.toLowerCase() === lIdentity;
       if (!identityMatches) continue;
 
       for (const allow of entry.allow) {
-        const serviceMatches = allow.service === service || allow.service === "*";
+        const serviceMatches = allow.service === "*" || allow.service.toLowerCase() === lService;
         if (!serviceMatches) continue;
 
         for (const allowedAction of allow.actions) {
-          if (allowedAction === action || allowedAction === "*") {
+          if (allowedAction === "*" || allowedAction.toLowerCase() === lAction) {
             return { allowed: true, ttl: allow.ttl };
           }
         }
@@ -197,6 +201,8 @@ export class PolicyEngine {
    * Writes the updated YAML back to disk.
    */
   addAllowRule(identity: string, service: string, actions: string[]): void {
+    identity = identity.toLowerCase();
+    service = service.toLowerCase();
     const raw = fs.readFileSync(this.policyPath, "utf-8");
     const parsed = yaml.load(raw) as PolicyFile;
 
@@ -220,7 +226,10 @@ export class PolicyEngine {
       entry.allow.push({ service, actions });
     }
 
-    fs.writeFileSync(this.policyPath, yaml.dump(parsed, { lineWidth: -1 }), "utf-8");
+    const yamlStr = yaml.dump(parsed, { lineWidth: -1 });
+    const tmp = this.policyPath + ".tmp";
+    fs.writeFileSync(tmp, yamlStr, "utf-8");
+    fs.renameSync(tmp, this.policyPath);
     this.policies = this.load();
   }
 
@@ -230,6 +239,8 @@ export class PolicyEngine {
    * Returns true if a rule was removed, false if none found.
    */
   removeAllowRule(identity: string, service: string): boolean {
+    identity = identity.toLowerCase();
+    service = service.toLowerCase();
     const raw = fs.readFileSync(this.policyPath, "utf-8");
     const parsed = yaml.load(raw) as PolicyFile;
 
@@ -240,7 +251,10 @@ export class PolicyEngine {
     entry.allow = entry.allow.filter((a) => a.service !== service);
     if (entry.allow.length === before) return false;
 
-    fs.writeFileSync(this.policyPath, yaml.dump(parsed, { lineWidth: -1 }), "utf-8");
+    const yamlStr = yaml.dump(parsed, { lineWidth: -1 });
+    const tmp = this.policyPath + ".tmp";
+    fs.writeFileSync(tmp, yamlStr, "utf-8");
+    fs.renameSync(tmp, this.policyPath);
     this.policies = this.load();
     return true;
   }
@@ -251,8 +265,9 @@ export class PolicyEngine {
    * Returns null if no rate limit is configured.
    */
   getRateLimit(identity: string): number | null {
+    const lIdentity = identity.toLowerCase();
     for (const entry of this.policies) {
-      if (entry.identity === identity) {
+      if (entry.identity.toLowerCase() === lIdentity) {
         return entry.rateLimit?.requestsPerMinute ?? null;
       }
     }

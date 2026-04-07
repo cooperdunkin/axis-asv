@@ -200,9 +200,11 @@ async function proxyStorageGetObject(
   }
 
   const url = `${GCS_API_BASE}/storage/v1/b/${encodeURIComponent(validated.bucket)}/o/${encodeURIComponent(validated.object)}?alt=media`;
-  const result = await gcsFetch(url, accessToken);
-  accessToken = "";
-  return result;
+  try {
+    return await gcsFetch(url, accessToken);
+  } finally {
+    accessToken = "";
+  }
 }
 
 async function proxyStorageListObjects(
@@ -235,9 +237,11 @@ async function proxyStorageListObjects(
   }
   const queryString = queryParts.length ? `?${queryParts.join("&")}` : "";
   const url = `${GCS_API_BASE}/storage/v1/b/${encodeURIComponent(validated.bucket)}/o${queryString}`;
-  const result = await gcsFetch(url, accessToken);
-  accessToken = "";
-  return result;
+  try {
+    return await gcsFetch(url, accessToken);
+  } finally {
+    accessToken = "";
+  }
 }
 
 // ---------------------------------------------------------------------------

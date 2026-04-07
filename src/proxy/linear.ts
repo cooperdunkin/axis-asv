@@ -215,9 +215,11 @@ async function proxyIssuesCreate(
     }
   `;
 
-  const result = await linearFetch(apiKey, query, { input });
-  apiKey = "";
-  return result;
+  try {
+    return await linearFetch(apiKey, query, { input });
+  } finally {
+    apiKey = "";
+  }
 }
 
 // ---------------------------------------------------------------------------

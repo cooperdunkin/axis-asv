@@ -245,6 +245,35 @@ policies:
 
 The `identity` comes from `AXIS_IDENTITY` in your MCP config. Policy files hot-reload on save.
 
+### Rate limiting
+
+Limit how many requests an identity can make per minute. If the limit is exceeded, further requests are denied until the window resets.
+
+```yaml
+policies:
+  - identity: ci-runner
+    rateLimit:
+      requestsPerMinute: 30
+    allow:
+      - service: openai
+        actions:
+          - responses.create
+```
+
+### TTL (time-to-live grants)
+
+Restrict how frequently a credential can be used. After a successful call, further requests for the same service/action are denied until the TTL expires. Useful for expensive or destructive operations.
+
+```yaml
+policies:
+  - identity: ci-runner
+    allow:
+      - service: stripe
+        actions:
+          - paymentIntents.create
+        ttl: 300  # credential access expires after 5 minutes
+```
+
 ### Audit log
 
 Every request — allowed or denied — is logged locally:

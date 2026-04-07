@@ -65,16 +65,18 @@ export class AuditLogger {
    * Log a completed request. Never throws — audit failure should not
    * interrupt the request flow, but we do stderr-warn on failure.
    */
-  log(entry: AuditEntry): void {
+  log(entry: AuditEntry): boolean {
     try {
       fs.mkdirSync(path.dirname(this.logPath), { recursive: true, mode: 0o700 });
       const line = JSON.stringify(entry) + "\n";
       fs.appendFileSync(this.logPath, line, { mode: 0o600 });
+      return true;
     } catch (err) {
       // Warn but do not crash the caller
       process.stderr.write(
         `[Axis audit] WARNING: failed to write audit log: ${(err as Error).message}\n`
       );
+      return false;
     }
   }
 

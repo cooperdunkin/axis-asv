@@ -220,9 +220,11 @@ async function proxyReposGet(params: unknown, keystore: SecretStore): Promise<Pr
 
   const { owner, repo } = validated;
   const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-  const result = await githubFetch(url, "GET", token);
-  token = "";
-  return result;
+  try {
+    return await githubFetch(url, "GET", token);
+  } finally {
+    token = "";
+  }
 }
 
 async function proxyIssuesCreate(params: unknown, keystore: SecretStore): Promise<ProxyResponse> {
@@ -243,9 +245,11 @@ async function proxyIssuesCreate(params: unknown, keystore: SecretStore): Promis
   const { owner, repo, title, ...rest } = validated;
   const body = { title, ...sanitizeParams(rest as Record<string, unknown>) };
   const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues`;
-  const result = await githubFetch(url, "POST", token, body);
-  token = "";
-  return result;
+  try {
+    return await githubFetch(url, "POST", token, body);
+  } finally {
+    token = "";
+  }
 }
 
 async function proxyPullsCreate(params: unknown, keystore: SecretStore): Promise<ProxyResponse> {
@@ -266,9 +270,11 @@ async function proxyPullsCreate(params: unknown, keystore: SecretStore): Promise
   const { owner, repo, title, head, base, ...rest } = validated;
   const body = { title, head, base, ...sanitizeParams(rest as Record<string, unknown>) };
   const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`;
-  const result = await githubFetch(url, "POST", token, body);
-  token = "";
-  return result;
+  try {
+    return await githubFetch(url, "POST", token, body);
+  } finally {
+    token = "";
+  }
 }
 
 async function proxyContentsRead(params: unknown, keystore: SecretStore): Promise<ProxyResponse> {
@@ -290,9 +296,11 @@ async function proxyContentsRead(params: unknown, keystore: SecretStore): Promis
   // Encode each path segment individually to preserve slashes but handle special chars
   const encodedPath = path.split("/").map(encodeURIComponent).join("/");
   const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}`;
-  const result = await githubFetch(url, "GET", token);
-  token = "";
-  return result;
+  try {
+    return await githubFetch(url, "GET", token);
+  } finally {
+    token = "";
+  }
 }
 
 // ---------------------------------------------------------------------------

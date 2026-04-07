@@ -43,6 +43,20 @@ function die(msg: string, code = 1): never {
   process.exit(code);
 }
 
+function validateServiceName(name: string): string {
+  const normalized = name.toLowerCase().trim();
+  if (normalized.length === 0) {
+    die("Service name cannot be empty.");
+  }
+  if (normalized.length > 64) {
+    die("Service name must be 64 characters or fewer.");
+  }
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(normalized)) {
+    die("Service name must be alphanumeric (with dashes/underscores). Example: openai, my-api, stripe_prod");
+  }
+  return normalized;
+}
+
 /** Prompt for a value. Uses raw-mode stdin when hidden=true to suppress echo. */
 async function prompt(question: string, hidden = false): Promise<string> {
   if (!process.stdin.isTTY) {
@@ -129,12 +143,65 @@ policies:
         actions:
           - responses.create
 
-  # Uncomment to allow all actions for a service:
-  # - identity: local-dev
-  #   allow:
-  #     - service: openai
-  #       actions:
-  #         - "*"
+# ── Examples ─────────────────────────────────────────────────
+# Uncomment and modify the blocks below for your use case.
+#
+# AI Services:
+#   - identity: my-agent
+#     allow:
+#       - service: openai
+#         actions: ["responses.create"]
+#       - service: anthropic
+#         actions: ["messages.create"]
+#
+# Developer Tools:
+#   - identity: my-agent
+#     allow:
+#       - service: github
+#         actions: ["repos.get", "issues.create", "pulls.create", "contents.read"]
+#       - service: linear
+#         actions: ["issues.create"]
+#
+# Communication:
+#   - identity: my-agent
+#     allow:
+#       - service: slack
+#         actions: ["chat.postMessage", "conversations.list"]
+#       - service: sendgrid
+#         actions: ["mail.send"]
+#       - service: twilio
+#         actions: ["messages.create"]
+#
+# Business Tools:
+#   - identity: my-agent
+#     allow:
+#       - service: stripe
+#         actions: ["paymentIntents.create", "customers.list"]
+#       - service: notion
+#         actions: ["pages.create", "databases.query"]
+#
+# Cloud Infrastructure:
+#   - identity: my-agent
+#     allow:
+#       - service: aws
+#         actions: ["s3.getObject", "s3.putObject"]
+#       - service: gcp
+#         actions: ["storage.getObject", "storage.listObjects"]
+#
+# Rate Limiting (optional):
+#   - identity: my-agent
+#     rateLimit:
+#       requestsPerMinute: 60
+#     allow:
+#       - service: openai
+#         actions: ["*"]
+#
+# TTL Grants (optional):
+#   - identity: ci-runner
+#     allow:
+#       - service: stripe
+#         actions: ["paymentIntents.create"]
+#         ttl: 300
 `;
 
 // ---------------------------------------------------------------------------
@@ -208,26 +275,66 @@ async function cmdSetup(): Promise<void> {
   }
   print("  ✓ Config directories created\n");
 
+  // ── Detect existing keystore ──────────────────────────────────
+  let masterPw = "";
+  const ksPath = keystorePath();
+  let hasExistingEntries = false;
+  if (fs.existsSync(ksPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(ksPath, "utf8"));
+      hasExistingEntries = Object.keys(raw.entries || {}).length > 0;
+    } catch {
+      // Malformed keystore — treat as empty
+    }
+  }
+
+  if (hasExistingEntries) {
+    print("⚠  Found existing keystore with stored secrets.");
+    print("  Running setup with a new master password will add entries that conflict with existing ones.\n");
+    print("  1) Enter your EXISTING master password to continue adding to current keystore");
+    print("  2) Start fresh (backs up current keystore and creates new one)\n");
+
+    const choice = await prompt("  Choice (1 or 2): ");
+
+    if (choice.trim() === "2") {
+      fs.copyFileSync(ksPath, ksPath + ".bak");
+      fs.unlinkSync(ksPath);
+      print("\n  ✓ Backed up existing keystore to keystore.json.bak\n");
+    } else {
+      const existingPw = await promptMasterPassword("  Existing master password");
+      const verifyKs = new Keystore(existingPw);
+      if (!verifyKs.verifyPassword()) {
+        die("Wrong master password. Run axis setup again.");
+      }
+      masterPw = existingPw;
+      print("\n  ✓ Existing master password verified\n");
+    }
+  }
+
   // ── Step 2: Master password ───────────────────────────────────
-  print("Step 2/4 — Set your master password\n");
-  print("  This encrypts all your secrets locally with AES-256-GCM.");
-  print("  Minimum 8 characters. You'll need this to start the MCP server.\n");
+  if (!masterPw) {
+    print("Step 2/4 — Set your master password\n");
+    print("  This encrypts all your secrets locally with AES-256-GCM.");
+    print("  Minimum 8 characters. You'll need this to start the MCP server.\n");
 
-  const masterPw = await promptMasterPassword("  Master password", true);
-  const confirmPw = await promptMasterPassword("  Confirm password");
-  if (masterPw !== confirmPw) {
-    die("Passwords do not match. Run axis setup again.");
-  }
-  print("");
+    masterPw = await promptMasterPassword("  Master password", true);
+    let confirmPw = await promptMasterPassword("  Confirm password");
+    if (masterPw !== confirmPw) {
+      confirmPw = "";
+      die("Passwords do not match. Run axis setup again.");
+    }
+    confirmPw = "";
+    print("");
 
-  // Store in keychain if possible
-  try {
-    await keychainSet(masterPw);
-    print("  ✓ Master password stored in OS keychain");
-  } catch {
-    print("  · OS keychain not available — you'll need AXIS_MASTER_PASSWORD env var");
+    // Store in keychain if possible
+    try {
+      await keychainSet(masterPw);
+      print("  ✓ Master password stored in OS keychain");
+    } catch {
+      print("  · OS keychain not available — you'll need AXIS_MASTER_PASSWORD env var");
+    }
+    print("");
   }
-  print("");
 
   // ── Step 3: First credential ──────────────────────────────────
   print("Step 3/4 — Store your first API key\n");
@@ -240,7 +347,7 @@ async function cmdSetup(): Promise<void> {
     die("Service name required. Run axis setup again.");
   }
 
-  const serviceName = service.trim().toLowerCase();
+  const serviceName = validateServiceName(service);
   let secretValue: string;
   if (serviceName === "openai") {
     secretValue = await prompt("  OpenAI API key (sk-...): ", true);
@@ -283,7 +390,7 @@ async function cmdSetup(): Promise<void> {
   }, null, 2);
 
   const printManualConfig = (): void => {
-    print('\n  Add this to your ~/.claude.json under "mcpServers":\n');
+    print('\n  Add this to your Claude Code MCP config:\n');
     print(manualConfigJson);
   };
 
@@ -291,7 +398,7 @@ async function cmdSetup(): Promise<void> {
     // -- Claude Code auto-registration --
     let claudeRegistered = false;
     try {
-      execSync("command -v claude", { stdio: "ignore" });
+      execSync("which claude", { stdio: "ignore" });
       // claude CLI is available — register via official command
       execSync("claude mcp add axis -- axis mcp", { stdio: "ignore" });
       print("  ✓ Registered Axis MCP server with Claude Code");
@@ -314,7 +421,7 @@ async function cmdSetup(): Promise<void> {
         servers["axis"] = {
           command: "axis",
           args: ["mcp"],
-          env: { AXIS_IDENTITY: "claude-code" },
+          env: { AXIS_IDENTITY: "cursor" },
         };
         cursorConfig["mcpServers"] = servers;
         fs.writeFileSync(cursorConfigPath, JSON.stringify(cursorConfig, null, 2) + "\n");
@@ -353,6 +460,7 @@ async function cmdSetup(): Promise<void> {
 async function cmdAdd(service: string, args: string[] = []): Promise<void> {
   if (!service) die("Usage: axis add <service>  (e.g. axis add openai)");
 
+  service = validateServiceName(service);
   const useStdin = args.includes("--stdin");
   print(`Adding secret for service: ${service}`);
 
@@ -371,6 +479,9 @@ async function cmdAdd(service: string, args: string[] = []): Promise<void> {
   let masterPw: string;
   if (useStdin && process.env["AXIS_MASTER_PASSWORD"]) {
     masterPw = process.env["AXIS_MASTER_PASSWORD"];
+    if (masterPw.length < 8) {
+      die("Master password must be at least 8 characters (via AXIS_MASTER_PASSWORD).");
+    }
   } else {
     masterPw = await promptMasterPassword("", isFirstSecret);
   }
@@ -408,7 +519,7 @@ async function cmdAdd(service: string, args: string[] = []): Promise<void> {
   if (existing.length >= 3) {
     print("You've reached the free tier limit of 3 credentials.");
     print("Upgrade to Pro for unlimited credentials: https://axisproxy.com/pro");
-    process.exit(0);
+    process.exit(1);
   }
 
   ks.setSecret(service, secretValue);
@@ -450,6 +561,7 @@ async function cmdList(): Promise<void> {
 async function cmdRevoke(service: string): Promise<void> {
   if (!service) die("Usage: axis revoke <service>  (e.g. axis revoke openai)");
 
+  service = validateServiceName(service);
   const masterPw = await promptMasterPassword();
   const ks = new Keystore(masterPw);
 
@@ -680,29 +792,37 @@ async function cmdLogs(args: string[]): Promise<void> {
     print("Watching for new entries (Ctrl-C to stop)...");
     let offset = fs.statSync(logPath).size;
 
-    fs.watch(logPath, () => {
+    const watcher = fs.watch(logPath, () => {
       try {
         const stat = fs.statSync(logPath);
         if (stat.size <= offset) return;
         const fd = fs.openSync(logPath, "r");
-        const buffer = Buffer.alloc(stat.size - offset);
-        fs.readSync(fd, buffer, 0, buffer.length, offset);
-        fs.closeSync(fd);
-        offset = stat.size;
-        const newLines = buffer.toString("utf8").split("\n").filter((l) => l.trim().length > 0);
-        for (const newLine of newLines) {
-          try {
-            const entry = JSON.parse(newLine) as AuditEntry;
-            if (matchesFilters(entry, serviceFilter, decisionFilter)) {
-              print(formatLogEntry(entry));
+        try {
+          const buffer = Buffer.alloc(stat.size - offset);
+          fs.readSync(fd, buffer, 0, buffer.length, offset);
+          offset = stat.size;
+          const newLines = buffer.toString("utf8").split("\n").filter((l) => l.trim().length > 0);
+          for (const newLine of newLines) {
+            try {
+              const entry = JSON.parse(newLine) as AuditEntry;
+              if (matchesFilters(entry, serviceFilter, decisionFilter)) {
+                print(formatLogEntry(entry));
+              }
+            } catch {
+              // Skip malformed lines
             }
-          } catch {
-            // Skip malformed lines
           }
+        } finally {
+          fs.closeSync(fd);
         }
       } catch {
         // Ignore transient watch errors
       }
+    });
+
+    process.on("SIGINT", () => {
+      watcher.close();
+      process.exit(0);
     });
   }
 }
@@ -791,8 +911,12 @@ async function cmdRotate(service: string): Promise<void> {
 
     // Prompt for new master password once
     const newPw = await promptMasterPassword("New master password", true);
-    const confirmPw = await promptMasterPassword("Confirm new master password");
-    if (newPw !== confirmPw) die("Passwords do not match.");
+    let confirmPw = await promptMasterPassword("Confirm new master password");
+    if (newPw !== confirmPw) {
+      confirmPw = "";
+      die("Passwords do not match.");
+    }
+    confirmPw = "";
 
     const newKs = new Keystore(newPw);
     for (const svc of services) {
@@ -814,11 +938,13 @@ async function cmdRotate(service: string): Promise<void> {
   }
 
   const newPw = await promptMasterPassword("New master password");
-  const confirmPw = await promptMasterPassword("Confirm new master password");
+  let confirmPw = await promptMasterPassword("Confirm new master password");
   if (newPw !== confirmPw) {
+    confirmPw = "";
     secret = "";
     die("Passwords do not match.");
   }
+  confirmPw = "";
 
   const newKs = new Keystore(newPw);
   newKs.setSecret(service, secret);
@@ -900,7 +1026,7 @@ async function cmdDashboard(): Promise<void> {
 
 function printHelp(): void {
   print(`
-Axis v0.7.0
+Axis v0.8.0
 
 Usage:
   axis <command> [args]

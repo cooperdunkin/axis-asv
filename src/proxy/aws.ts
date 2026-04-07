@@ -227,7 +227,7 @@ async function awsS3Fetch(
   bodyContent: string
 ): Promise<ProxyResponse> {
   const host = `${bucket}.s3.${region}.amazonaws.com`;
-  const path = `/${encodeURIComponent(objectKey)}`;
+  const path = '/' + objectKey.split('/').map(encodeURIComponent).join('/');
   const url = `https://${host}${path}`;
 
   const signedHeaders = signRequest({
@@ -317,17 +317,19 @@ async function proxyS3GetObject(
   let secretAccessKey = credential.substring(colonIndex + 1);
   credential = "";
 
-  const result = await awsS3Fetch(
-    "GET",
-    validated.bucket,
-    validated.key,
-    validated.region,
-    accessKeyId,
-    secretAccessKey,
-    ""
-  );
-  secretAccessKey = "";
-  return result;
+  try {
+    return await awsS3Fetch(
+      "GET",
+      validated.bucket,
+      validated.key,
+      validated.region,
+      accessKeyId,
+      secretAccessKey,
+      ""
+    );
+  } finally {
+    secretAccessKey = "";
+  }
 }
 
 async function proxyS3PutObject(
@@ -363,17 +365,19 @@ async function proxyS3PutObject(
   let secretAccessKey = credential.substring(colonIndex + 1);
   credential = "";
 
-  const result = await awsS3Fetch(
-    "PUT",
-    validated.bucket,
-    validated.key,
-    validated.region,
-    accessKeyId,
-    secretAccessKey,
-    validated.body
-  );
-  secretAccessKey = "";
-  return result;
+  try {
+    return await awsS3Fetch(
+      "PUT",
+      validated.bucket,
+      validated.key,
+      validated.region,
+      accessKeyId,
+      secretAccessKey,
+      validated.body
+    );
+  } finally {
+    secretAccessKey = "";
+  }
 }
 
 // ---------------------------------------------------------------------------

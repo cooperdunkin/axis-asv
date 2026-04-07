@@ -55,7 +55,7 @@ export type ProxyResponse = ProxyResult | ProxyError;
 // Validation
 // ---------------------------------------------------------------------------
 
-function validateParams(params: unknown): OpenAIProxyParams {
+export function validateParams(params: unknown): OpenAIProxyParams {
   if (!params || typeof params !== "object" || Array.isArray(params)) {
     throw new Error('Params must be a non-null object.');
   }
@@ -72,6 +72,27 @@ function validateParams(params: unknown): OpenAIProxyParams {
   }
 
   return p as OpenAIProxyParams;
+}
+
+// ---------------------------------------------------------------------------
+// Sanitization
+// ---------------------------------------------------------------------------
+
+export function sanitizeParams(
+  params: Record<string, unknown>
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(params).filter(([k]) => {
+      const lower = k.toLowerCase();
+      return (
+        !lower.includes("key") &&
+        !lower.includes("secret") &&
+        !lower.includes("token") &&
+        !lower.includes("password") &&
+        !lower.includes("auth")
+      );
+    })
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -110,18 +131,7 @@ export async function proxyOpenAIResponses(
 
   // Strip any fields that look like they might be API credentials
   // (defense-in-depth: agent should never pass a key, but we sanitize anyway)
-  const sanitizedRest = Object.fromEntries(
-    Object.entries(rest).filter(([k]) => {
-      const lower = k.toLowerCase();
-      return (
-        !lower.includes("key") &&
-        !lower.includes("secret") &&
-        !lower.includes("token") &&
-        !lower.includes("password") &&
-        !lower.includes("auth")
-      );
-    })
-  );
+  const sanitizedRest = sanitizeParams(rest);
 
   const body = { model, input, ...sanitizedRest };
 

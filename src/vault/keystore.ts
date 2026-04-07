@@ -68,7 +68,7 @@ export function axisHome(): string {
 }
 
 export function keystorePath(): string {
-  return path.join(axisHome(), "keystore.json");
+  return process.env["AXIS_KEYSTORE_PATH"] || path.join(axisHome(), "keystore.json");
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +180,7 @@ export class Keystore {
 
   /** Store (or overwrite) an encrypted secret for a service. */
   setSecret(service: string, secret: string): void {
+    service = service.toLowerCase();
     if (!service || service.trim().length === 0) {
       throw new Error("Service name must not be empty.");
     }
@@ -208,6 +209,7 @@ export class Keystore {
 
   /** Retrieve and decrypt a secret. Throws if service not found or decryption fails. */
   getSecret(service: string): string {
+    service = service.toLowerCase();
     const data = loadKeystoreRaw();
     const entry = data.entries[service];
     if (!entry) {
@@ -218,6 +220,7 @@ export class Keystore {
 
   /** Delete a stored secret. Returns true if it existed, false otherwise. */
   deleteSecret(service: string): boolean {
+    service = service.toLowerCase();
     const data = loadKeystoreRaw();
     if (!data.entries[service]) return false;
     delete data.entries[service];

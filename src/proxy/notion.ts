@@ -104,6 +104,9 @@ export function validatePagesCreateParams(params: unknown): PagesCreateParams {
   if (!p["properties"] || typeof p["properties"] !== "object" || Array.isArray(p["properties"])) {
     throw new Error(`Required param "properties" must be an object.`);
   }
+  if (Object.keys(p["properties"] as Record<string, unknown>).length === 0) {
+    throw new Error("properties must contain at least one property");
+  }
 
   return p as PagesCreateParams;
 }
@@ -203,9 +206,11 @@ async function proxyPagesCreate(
   };
 
   const url = `${NOTION_API_BASE}/v1/pages`;
-  const result = await notionFetch(url, "POST", token, body);
-  token = "";
-  return result;
+  try {
+    return await notionFetch(url, "POST", token, body);
+  } finally {
+    token = "";
+  }
 }
 
 async function proxyDatabasesQuery(
@@ -232,9 +237,11 @@ async function proxyDatabasesQuery(
   const { database_id, ...rest } = validated;
   const body = sanitizeParams(rest as Record<string, unknown>);
   const url = `${NOTION_API_BASE}/v1/databases/${encodeURIComponent(database_id)}/query`;
-  const result = await notionFetch(url, "POST", token, Object.keys(body).length ? body : undefined);
-  token = "";
-  return result;
+  try {
+    return await notionFetch(url, "POST", token, Object.keys(body).length ? body : undefined);
+  } finally {
+    token = "";
+  }
 }
 
 // ---------------------------------------------------------------------------
