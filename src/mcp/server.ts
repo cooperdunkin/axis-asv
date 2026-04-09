@@ -34,6 +34,7 @@ import { proxyRequest } from "../proxy/openai.js";
 import { keychainGet } from "../keychain/keychain.js";
 import { RateLimiter } from "../policy/ratelimit.js";
 import { TtlStore } from "../policy/ttlstore.js";
+import { SERVICE_ACTIONS } from "../services.js";
 // ---------------------------------------------------------------------------
 // Master password resolution
 // ---------------------------------------------------------------------------
@@ -133,20 +134,7 @@ const LIST_ACTIONS_TOOL = {
   },
 };
 
-/** Hardcoded action map per service (mirrors proxy dispatch table). */
-const SERVICE_ACTIONS: Record<string, string[]> = {
-  openai: ["responses.create"],
-  anthropic: ["messages.create"],
-  github: ["repos.get", "issues.create", "pulls.create", "contents.read"],
-  stripe: ["paymentIntents.create", "customers.list"],
-  slack: ["chat.postMessage", "conversations.list"],
-  sendgrid: ["mail.send"],
-  notion: ["pages.create", "databases.query"],
-  linear: ["issues.create"],
-  twilio: ["messages.create"],
-  aws: ["s3.getObject", "s3.putObject"],
-  gcp: ["storage.getObject", "storage.listObjects"],
-};
+// SERVICE_ACTIONS imported from ../services.ts
 
 // ---------------------------------------------------------------------------
 // Exported handler for testing

@@ -6,7 +6,7 @@
 
 **Your AI agent can read your `.env` file. Axis stops that.**
 
-Axis is the credential broker for AI agents — an MCP-native vault where agents call external APIs through Axis, and never receive the raw key. Think AWS IAM roles, but for LLM tool calls.
+Axis is the identity and credential layer for AI agents — an MCP-native broker where agents get scoped, time-limited permission to act, without ever seeing a raw API key. Think AWS IAM roles, but for LLM tool calls.
 
 ```
 Agent (Claude Code / Cursor / Devin)
@@ -26,7 +26,7 @@ The API key is never returned to the agent.
 
 ## Why Axis
 
-Every current method of giving an AI agent API credentials is broken:
+AI agents are non-human identities. Every method of delivering credentials to them is broken:
 
 | Method | Problem |
 |--------|---------|
@@ -36,6 +36,10 @@ Every current method of giving an AI agent API credentials is broken:
 | Manual proxies | HashiCorp Vault overhead for a side project |
 
 Axis is the missing primitive: **time-limited, action-scoped credential access without the agent ever seeing the key.**
+
+### How Axis fits the NHI landscape
+
+Enterprise NHI platforms (Oasis, CyberArk, Strata) govern identity at organizational scale — SSO, cross-cloud policy, compliance dashboards. Axis operates at the developer layer: local-first, single-machine, zero-config credential brokering for individual developers and small teams. They're complementary, not competing. Axis is the tool you install today; enterprise NHI is what your security team evaluates next quarter.
 
 ---
 

@@ -71,6 +71,7 @@ import {
   validateStorageListObjectsParams,
   sanitizeParams as sanitizeGCPParams,
 } from "../proxy/gcp.js";
+import { AxisVault } from "../index.js";
 
 // ---------------------------------------------------------------------------
 // Test harness
@@ -1857,6 +1858,242 @@ async function runOpenAIProxyTests(): Promise<void> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// SDK (AxisVault) tests
+// ---------------------------------------------------------------------------
+
+async function runSDKTests(): Promise<void> {
+  console.log("\n[SDK - AxisVault]");
+
+  function withTmpEnv(fn: (dirs: { tmpDir: string; policyPath: string; keystorePath: string; auditPath: string }) => void | Promise<void>): () => Promise<void> {
+    return async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axis-sdk-test-"));
+      const policyPath = path.join(tmpDir, "policy.yaml");
+      const keystorePath = path.join(tmpDir, "keystore.json");
+      const auditPath = path.join(tmpDir, "audit.jsonl");
+
+      // Write a test policy
+      fs.writeFileSync(policyPath, `policies:
+  - identity: test-sdk
+    allow:
+      - service: openai
+        actions:
+          - responses.create
+      - service: test-service
+        actions:
+          - test-action
+  - identity: rate-limited
+    rateLimit:
+      requestsPerMinute: 2
+    allow:
+      - service: openai
+        actions:
+          - responses.create
+`);
+
+      const origKsPath = process.env["AXIS_KEYSTORE_PATH"];
+      try {
+        await fn({ tmpDir, policyPath, keystorePath, auditPath });
+      } finally {
+        process.env["AXIS_KEYSTORE_PATH"] = origKsPath;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    };
+  }
+
+  await test("constructor creates vault without errors", withTmpEnv(({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    assert.ok(vault);
+  }));
+
+  await test("constructor rejects empty master password", withTmpEnv(({ policyPath, keystorePath, auditPath }) => {
+    assert.throws(
+      () => new AxisVault({ masterPassword: "", policyPath, keystorePath, auditLogPath: auditPath }),
+      /masterPassword is required/
+    );
+  }));
+
+  await test("addCredential stores a credential", withTmpEnv(async ({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    await vault.addCredential("test-service", "secret-123");
+    const services = vault.listServices();
+    assert.ok(services.includes("test-service"));
+  }));
+
+  await test("listServices returns stored services", withTmpEnv(async ({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    await vault.addCredential("svc-a", "secret-a");
+    await vault.addCredential("svc-b", "secret-b");
+    const services = vault.listServices();
+    assert.ok(services.includes("svc-a"));
+    assert.ok(services.includes("svc-b"));
+    assert.strictEqual(services.length, 2);
+  }));
+
+  await test("checkPolicy returns policy decision", withTmpEnv(({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    const allowed = vault.checkPolicy("openai", "responses.create");
+    assert.strictEqual(allowed.allowed, true);
+
+    const denied = vault.checkPolicy("stripe", "paymentIntents.create");
+    assert.strictEqual(denied.allowed, false);
+  }));
+
+  await test("revokeCredential removes a credential", withTmpEnv(async ({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    await vault.addCredential("test-service", "secret-123");
+    assert.ok(vault.listServices().includes("test-service"));
+    await vault.revokeCredential("test-service");
+    assert.ok(!vault.listServices().includes("test-service"));
+  }));
+
+  await test("executeAction with missing credential returns clean error", withTmpEnv(async ({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    // No credential stored for openai
+    const result = await vault.executeAction({
+      service: "openai",
+      action: "responses.create",
+      justification: "test call",
+      params: { model: "gpt-4o", input: "test" },
+    });
+    assert.strictEqual(result.ok, false);
+    if (!result.ok) {
+      assert.ok(result.error.length > 0);
+      assert.ok(result.requestId.length > 0);
+    }
+  }));
+
+  await test("executeAction with denied policy returns error", withTmpEnv(async ({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    const result = await vault.executeAction({
+      service: "stripe",
+      action: "paymentIntents.create",
+      justification: "test",
+      params: {},
+    });
+    assert.strictEqual(result.ok, false);
+    if (!result.ok) {
+      assert.ok(result.error.includes("Policy denied"));
+    }
+  }));
+
+  await test("getAuditLog returns entries after operations", withTmpEnv(async ({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    // Trigger a deny to generate a log entry
+    await vault.executeAction({
+      service: "stripe",
+      action: "paymentIntents.create",
+      justification: "test audit",
+      params: {},
+    });
+    const logs = vault.getAuditLog();
+    assert.ok(logs.length > 0);
+    assert.strictEqual(logs[0].decision, "deny");
+    assert.strictEqual(logs[0].service, "stripe");
+  }));
+
+  await test("getAuditLog supports filters", withTmpEnv(async ({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    await vault.executeAction({ service: "stripe", action: "paymentIntents.create", justification: "t1", params: {} });
+    await vault.executeAction({ service: "openai", action: "responses.create", justification: "t2", params: { model: "gpt-4o", input: "x" } });
+
+    const stripeLogs = vault.getAuditLog({ service: "stripe" });
+    assert.ok(stripeLogs.every((e) => e.service === "stripe"));
+
+    const denyLogs = vault.getAuditLog({ decision: "deny" });
+    assert.ok(denyLogs.every((e) => e.decision === "deny"));
+  }));
+
+  await test("listActions returns actions for known service", withTmpEnv(({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    const actions = vault.listActions("openai");
+    assert.deepStrictEqual(actions, ["responses.create"]);
+
+    const unknown = vault.listActions("nonexistent");
+    assert.strictEqual(unknown, null);
+  }));
+
+  await test("vault does NOT expose getSecret or decryption methods", withTmpEnv(({ policyPath, keystorePath, auditPath }) => {
+    const vault = new AxisVault({
+      masterPassword: "test-password-123",
+      policyPath,
+      keystorePath,
+      auditLogPath: auditPath,
+      identity: "test-sdk",
+    });
+    // Verify no method exists to retrieve raw secrets
+    assert.strictEqual((vault as any).getSecret, undefined);
+    assert.strictEqual((vault as any).decrypt, undefined);
+    assert.strictEqual((vault as any).keystore?.getSecret === undefined || typeof (vault as any).keystore === "undefined" ? true : false, false);
+    // The keystore is private — accessing it directly should fail in strict TS,
+    // but at runtime we verify the vault's public API has no secret-retrieval method
+    const publicMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(vault));
+    assert.ok(!publicMethods.includes("getSecret"));
+    assert.ok(!publicMethods.includes("decrypt"));
+    assert.ok(!publicMethods.includes("getRawKeystore"));
+  }));
+}
+
 async function main(): Promise<void> {
   console.log("Axis Test Suite");
   console.log("==============");
@@ -1885,6 +2122,7 @@ async function main(): Promise<void> {
   await runStdinTests();
   await runSetupTests();
   await runFreeTierTests();
+  await runSDKTests();
 
   console.log(`\n${"=".repeat(40)}`);
   console.log(`Results: ${passed} passed, ${failed} failed`);
